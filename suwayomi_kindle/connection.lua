@@ -38,12 +38,12 @@ local LIBRARY_QUERY = [[query KindleLibrary($first: Int!, $offset: Int!) {
   mangas(filter: {inLibrary: {equalTo: true}}, first: $first, offset: $offset,
       order: [{by: ID, byType: ASC}]) {
     totalCount pageInfo { hasNextPage }
-    nodes { id title author thumbnailUrl source { displayName } }
+    nodes { id title author unreadCount chapters { totalCount } thumbnailUrl source { displayName } }
   }
 }]]
 local SOURCE_MANGA_QUERY = [[mutation KindleSourceManga($input: FetchSourceMangaInput!) {
   fetchSourceManga(input: $input) {
-    hasNextPage mangas { id title author description thumbnailUrl inLibrary }
+    hasNextPage mangas { id title author description chapters { totalCount } thumbnailUrl inLibrary }
   }
 }]]
 local ADD_MUTATION = [[mutation KindleAdd($input: UpdateMangaInput!) {
@@ -287,7 +287,8 @@ local function manga_rows(nodes)
         rows[i] = {id = tostring(item.id), title = item.title, author = string_field(item.author),
             thumbnail = string_field(item.thumbnailUrl), description = string_field(item.description),
             source = type(item.source) == "table" and string_field(item.source.displayName) or "",
-            in_library = item.inLibrary == true}
+            chapters = type(item.chapters) == "table" and tonumber(item.chapters.totalCount) or nil,
+            unread = tonumber(item.unreadCount), in_library = item.inLibrary == true}
     end
     return rows
 end

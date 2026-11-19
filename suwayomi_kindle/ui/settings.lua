@@ -10,7 +10,8 @@ local Space = require("ui/widget/verticalspan")
 local Gap = require("ui/widget/horizontalspan")
 local Scroll = require("ui/widget/container/scrollablecontainer")
 local Worker = require("suwayomi_kindle/worker")
-local CheckButton = require("ui/widget/checkbutton")
+local Left = require("ui/widget/container/leftcontainer")
+local Languages = require("suwayomi_kindle/languages")
 local InputText = require("ui/widget/inputtext")
 local Text = require("ui/widget/textwidget")
 local Paragraph = require("ui/widget/textboxwidget")
@@ -56,7 +57,7 @@ function methods:build_settings_index(screen_width, body_height)
     local download = self.settings.download
     local library = self.settings.library
     local browse = self.settings.browse
-    local browse_lang = ({all = "全部语言", en = "英文", zh = "中文"})[browse.language] or "中文"
+    local browse_lang = Languages.summary(browse.language)
     return Frame:new{
         width = screen_width, height = body_height, bordersize = 0, padding = 0,
         padding_left = inset, padding_right = screen_width - width - inset,
@@ -106,93 +107,102 @@ local function save_section(home, section, patch)
     return true
 end
 
-local function choice_button(home, options, selected, on_select, width)
-    local row = Row:new{}
-    local gap, count = scale(6), #options
-    local button_width = math.floor((width - gap * (count - 1)) / count)
-    for i, option in ipairs(options) do
-        if i > 1 then row[#row + 1] = Gap:new{width = gap} end
-        row[#row + 1] = Button.new{
-            text = option.label,
-            width = button_width,
-            filled = selected == option.value,
-            show_parent = home,
-            callback = function() on_select(option.value) end,
-        }
+-- Fixed-width value controls keep labels aligned on small screens.
+local function setting_line(width, text, control)
+    local h = scale(48)
+    return Row:new{Left:new{dimen = Geom:new{w = width - control:getSize().w, h = h}, label(text)}, control}
+end
+
+local function small(home, text, w, fn, selected)
+    return Button.new{text = text, compact = true, width = w, filled = selected, enabled = fn ~= nil,
+        show_parent = home, callback = fn}
+end
+
+local function view_line(home, section, width)
+    local modes = Row:new{}
+    for _, option in ipairs({{"list", "列表"}, {"grid", "书架"}}) do
+        modes[#modes+1] = small(home, option[2], math.min(scale(62), math.floor(width / 4)), function()
+            save_section(home, section, {view_mode = option[1]})
+        end, home.settings[section].view_mode == option[1])
     end
-    return row
+    return setting_line(width, "显示方式", modes)
+end
+
+local policies = {{"never","不删除"}, {"0","直接删除"}, {"1","留 1 章"}, {"3","留 3 章"},
+    {"5","留 5 章"}, {"10","留 10 章"}}
+
+local function stepper(home, width, title, options, value, change)
+    local index = 1
+    for i, opt in ipairs(options) do if opt[1] == value then index = i end end
+    local w = math.min(scale(82), math.floor(width/4))
+    local value_widget = require("ui/widget/container/centercontainer"):new{
+        dimen = Geom:new{w = w, h = scale(30)},
+        Text:new{text = options[index][2], face = Font:getFace("smallinfofont", 15), max_width = w},
+    }
+    return setting_line(width, title, Row:new{
+        small(home, "<", scale(32), index > 1 and function() change(options[index-1][1]) end or nil),
+        value_widget,
+        small(home, ">", scale(32), index < #options and function() change(options[index+1][1]) end or nil),
+    })
 end
 
 function methods:build_download_settings(screen_width, body_height)
     local cfg = self.settings.download
     local width = math.min(screen_width - scale(48), scale(520))
-    local column = Column:new{align = "left", spacing(18)}
-    column[#column + 1] = SettingRow:new{
-        label = "下载位置", value = cfg.directory == "" and "KOReader 书库" or cfg.directory,
-        width = width, callback = function() self:choose_download_directory() end,
-    }
-    column[#column + 1] = rule(width)
-    column[#column + 1] = spacing(12)
-    column[#column + 1] = label("最大并行下载数")
-    column[#column + 1] = choice_button(self, {
-        {label = "1", value = 1}, {label = "2", value = 2}, {label = "3", value = 3},
-    }, cfg.max_parallel, function(value)
-        save_section(self, "download", {max_parallel = value})
-    end, width)
-    column[#column + 1] = spacing(14)
-    column[#column + 1] = label("标记已读后")
-    local function retention(options)
-        column[#column + 1] = spacing(6)
-        column[#column + 1] = choice_button(self, options, cfg.retention, function(value)
-            save_section(self, "download", {retention = value})
-        end, width)
-    end
-    retention({{label = "不删除", value = "never"}, {label = "直接删除", value = "0"}})
-    retention({{label = "留 1 章", value = "1"}, {label = "留 3 章", value = "3"},
-        {label = "留 5 章", value = "5"}, {label = "留 10 章", value = "10"}})
-    column[#column + 1] = rule(width)
-    column[#column + 1] = Paragraph:new{
-        text = "下载队列接入后，此策略将用于清理已读章节。",
-        width = width, face = Font:getFace("x_smallinfofont", 14),
+    local column = Column:new{align = "left", spacing(10),
+        SettingRow:new{label = "下载位置", value = cfg.directory == "" and "KOReader 书库" or cfg.directory,
+            width = width, callback = function() self:choose_download_directory() end},
+        rule(width),
+        stepper(self, width, "并行下载", {{1,"1"},{2,"2"},{3,"3"}}, cfg.max_parallel,
+            function(v) save_section(self, "download", {max_parallel = v}) end),
+        rule(width),
+        stepper(self, width, "已读后保留", policies, cfg.retention,
+            function(v) save_section(self, "download", {retention = v}) end),
+        rule(width),
     }
     return self:settings_page_frame(screen_width, body_height, width, column)
 end
 
 function methods:build_library_settings(screen_width, body_height)
-    local cfg = self.settings.library
     local width = math.min(screen_width - scale(48), scale(520))
-    local column = Column:new{align = "left", spacing(18)}
-    column[#column + 1] = label("漫画显示方式")
-    column[#column + 1] = choice_button(self, {
-        {label = "列表", value = "list"}, {label = "书架", value = "grid"},
-    }, cfg.view_mode, function(value)
-        save_section(self, "library", {view_mode = value})
-    end, width)
-    column[#column + 1] = rule(width)
+    local column = Column:new{align = "left", spacing(10), view_line(self, "library", width), rule(width)}
     return self:settings_page_frame(screen_width, body_height, width, column)
 end
 
 function methods:build_browse_settings(screen_width, body_height)
-    local cfg = self.settings.browse
     local width = math.min(screen_width - scale(48), scale(520))
-    local column = Column:new{align = "left", spacing(18)}
-    column[#column + 1] = label("源语言")
-    column[#column + 1] = choice_button(self, {
-        {label = "中文", value = "zh"},
-        {label = "英文", value = "en"},
-        {label = "全部", value = "all"},
-    }, cfg.language, function(value)
-        save_section(self, "browse", {language = value})
-    end, width)
-    column[#column + 1] = rule(width)
-    column[#column + 1] = label("漫画显示方式")
-    column[#column + 1] = choice_button(self, {
-        {label = "列表", value = "list"}, {label = "书架", value = "grid"},
-    }, cfg.view_mode, function(value)
-        save_section(self, "browse", {view_mode = value})
-    end, width)
-    column[#column + 1] = rule(width)
+    local column = Column:new{align = "left", spacing(10),
+        SettingRow:new{label = "源语言", value = Languages.summary(self.settings.browse.language), width = width,
+            callback = function()
+                self.settings_route, self.language_page = "languages", 1
+                if not self.all_sources and self.settings.connection.server_url ~= "" then self:fetch_sources()
+                else self:refresh() end
+            end},
+        rule(width), view_line(self, "browse", width), rule(width)}
     return self:settings_page_frame(screen_width, body_height, width, column)
+end
+
+function methods:build_language_picker(screen_width, height)
+    local width = math.min(screen_width - scale(48), scale(520))
+    local value = self.settings.browse.language
+    local set = Languages.set(value)
+    local options = Languages.options(value, self.all_sources)
+    local row_h = scale(40)
+    local size = math.max(1, math.floor((height-scale(16))/row_h))
+    local pages = math.ceil((#options+1)/size)
+    local page = math.min(pages, self.language_page or 1)
+    self.pagination = {page = page, total = pages, go = function(n) self.language_page = n; self:refresh() end}
+    local column = Column:new{align = "left", spacing(8)}
+    for i = (page-1)*size+1, math.min(page*size, #options+1) do
+        local code = i == 1 and "all" or options[i-1]
+        local checked = set.all or set[code]
+        local text = (checked and "☑  " or "☐  ") .. (code == "all" and "全部语言" or Languages.label(code))
+        -- The full row is tappable; the text stays left-aligned.
+        column[#column+1] = SettingRow:new{label = text, single_line = true, width = width, callback = function()
+            save_section(self, "browse", {language = Languages.toggle(value, code, options)})
+        end}
+    end
+    return self:settings_page_frame(screen_width, height, width, column)
 end
 
 function methods:settings_page_frame(screen_width, body_height, width, content)
@@ -225,8 +235,8 @@ end
 
 -- InputText sends focus events to its owning top-level widget.
 function methods:onSwitchFocus(field)
-    local form = self.connection_form
-    if not form or self.verifying then return end
+    local form = self.input_form
+    if not form or field.readonly then return end
     if form.focused and form.focused ~= field then
         form.focused:onCloseKeyboard()
         form.focused:unfocus()
@@ -247,7 +257,7 @@ function methods:getFocusableWidgetXY()
 end
 
 function methods:onKeyboardHeightChanged()
-    local form = self.connection_form
+    local form = self.input_form
     if not form or not form.focused or not form.focused:isKeyboardVisible() then return end
     local viewport, field = form.viewport, form.focused
     local keyboard = field:getKeyboardDimen()
@@ -267,7 +277,7 @@ function methods:onKeyboardHeightChanged()
 end
 
 function methods:finish_field()
-    local form = self.connection_form
+    local form = self.input_form
     if not form or not form.focused then return end
     local field = form.focused
     form.focused = nil
@@ -276,29 +286,55 @@ function methods:finish_field()
     field:unfocus()
     form.viewport:reset()
     form.viewport.dimen.h = form.height
+    if form.redraw_on_blur then
+        form.redraw_on_blur = nil
+        UI:nextTick(function()
+            if self.alive and self.input_form == form then self:refresh() end
+        end)
+    end
     UI:setDirty(self, "ui")
 end
 
 function methods:onCloseDialog()
-    if self.connection_form and self.connection_form.focused then
+    if self.input_form and self.input_form.focused then
         self:finish_field()
+    elseif self.menu_open then
+        self.menu_open = false
+        self:refresh()
     elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
         self:catalog_back()
     elseif self.selected_tab == "settings" and self.settings_route ~= "index" then
-        self.settings_route = "index"
+        self.settings_route = self.settings_route == "languages" and "browse" or "index"
         self:refresh()
     else
         self:close()
     end
 end
 
-function methods:release_connection_form()
-    local form = self.connection_form
+function methods:release_input_form()
+    local form = self.input_form
     if not form then return end
     self:finish_field()
     form.viewport:reset()
-    self.connection_form = nil
+    self.input_form = nil
     self.cropping_widget = nil
+end
+
+function methods:bind_keyboard_close(input)
+    -- Back can close KOReader's keyboard directly, without going through Home.
+    if input.keyboard and input.keyboard.onCloseWidget then
+        local on_close = input.keyboard.onCloseWidget
+        input.keyboard.onCloseWidget = function(keyboard)
+            local result = on_close(keyboard)
+            UI:nextTick(function()
+                local form = self.input_form
+                if form and form.focused == input and not input:isKeyboardVisible() then
+                    self:finish_field()
+                end
+            end)
+            return result
+        end
+    end
 end
 
 local function add_field(home, column, width, key, title, hint)
@@ -316,41 +352,29 @@ local function add_field(home, column, width, key, title, hint)
             if home.alive then home:finish_field() end
         end,
     }
-    -- Back can close KOReader's keyboard directly, without going through Home.
-    if input.keyboard and input.keyboard.onCloseWidget then
-        local on_close = input.keyboard.onCloseWidget
-        input.keyboard.onCloseWidget = function(keyboard)
-            local result = on_close(keyboard)
-            UI:nextTick(function()
-                local form = home.connection_form
-                if form and form.focused == input and not input:isKeyboardVisible() then
-                    home:finish_field()
-                end
-            end)
-            return result
-        end
-    end
-    home.connection_form.fields[key] = input
-    column[#column + 1] = label(title)
-    column[#column + 1] = spacing(6)
-    column[#column + 1] = input
+    home:bind_keyboard_close(input)
+    home.input_form.fields[key] = input
     if key == "password" then
         local toggle
-        toggle = CheckButton:new{
-            text = "显示密码", width = width, parent = home, enabled = not home.verifying,
-            callback = function()
-                input.text_type = toggle.checked and "text" or "password"
-                input:setText(input:getText(), true)
-                UI:setDirty(home, "ui")
-            end,
-        }
-        column[#column + 1] = toggle
+        toggle = small(home, "显示", scale(54), not home.verifying and function()
+            local reveal = input.text_type == "password"
+            input.text_type = reveal and "text" or "password"
+            input:setText(input:getText(), true)
+            toggle:setText(reveal and "隐藏" or "显示", scale(54))
+            UI:setDirty(home, "ui")
+        end or nil)
+        column[#column+1] = setting_line(width, title, toggle)
+    else
+        column[#column+1] = label(title)
     end
+    column[#column+1] = spacing(4)
+    column[#column+1] = input
 end
 
-function methods:read_connection_fields()
-    local form = self.connection_form
+function methods:capture_inputs()
+    local form = self.input_form
     if not form then return end
+    if form.capture then form.capture(); return end
     for key, field in pairs(form.fields) do
         local value = (field:getText():gsub("[\r\n]", ""))
         if value ~= self.draft[key] then
@@ -366,32 +390,18 @@ function methods:build_connection_settings(screen_width, body_height)
     local width = math.min(screen_width - scale(48), scale(520))
     local column = Column:new{align = "left", spacing(20)}
     local form = {fields = {}, height = math.max(scale(48), body_height)}
-    self.connection_form = form
+    self.input_form = form
     add_field(self, column, width, "server_url", "服务器地址", "http://192.168.1.10:4567")
     column[#column + 1] = spacing(16)
-    column[#column + 1] = label("认证方式")
-    column[#column + 1] = spacing(6)
-
-    local modes = Row:new{}
-    local gap = scale(6)
-    local segment_width = math.floor((width - 2 * gap) / 3)
-    for i, mode in ipairs({"none", "basic_auth", "ui_login"}) do
-        if i > 1 then modes[#modes + 1] = Gap:new{width = gap} end
-        modes[#modes + 1] = Button.new{
-            text = Config.auth_label(mode), width = segment_width,
-            filled = mode == self.draft.auth_method, enabled = not self.verifying,
-            show_parent = self,
-            callback = function()
-                if self.draft.auth_method == mode then return end
-                self:read_connection_fields()
-                self.draft.auth_method = mode
-                self.dirty = true
-                self.connection_status, self.verification_result = nil, nil
-                self:refresh()
-            end,
-        }
-    end
-    column[#column + 1] = modes
+    column[#column+1] = stepper(self, width, "认证方式", {
+        {"none", "无认证"}, {"basic_auth", "Basic Auth"}, {"ui_login", "账号登录"},
+    }, self.draft.auth_method, function(mode)
+        if self.verifying then return end
+        self:capture_inputs()
+        self.draft.auth_method, self.dirty = mode, true
+        self.connection_status, self.verification_result = nil, nil
+        self:refresh()
+    end)
     if self.draft.auth_method ~= "none" then
         column[#column + 1] = spacing(16)
         add_field(self, column, width, "username", "用户名", "")
@@ -402,16 +412,16 @@ function methods:build_connection_settings(screen_width, body_height)
     column[#column + 1] = spacing(20)
     column[#column + 1] = rule(width)
     column[#column + 1] = spacing(14)
-    local secondary = math.floor((width - scale(10)) * 0.42)
+    local secondary = math.min(scale(104), math.floor((width-scale(8))/2))
     column[#column + 1] = Row:new{
         Button.new{
-            text = "保存设置", width = secondary, enabled = not self.verifying,
+            text = "保存设置", compact = true, width = secondary, enabled = not self.verifying,
             show_parent = self, callback = function() self:save_draft() end,
         },
         Gap:new{width = scale(10)},
         Button.new{
             text = self.verifying and "验证中…" or "保存并验证",
-            width = width - secondary - scale(10), filled = true, enabled = not self.verifying,
+            compact = true, width = secondary, filled = true, enabled = not self.verifying,
             show_parent = self, callback = function() self:verify_connection() end,
         },
     }
@@ -450,7 +460,7 @@ end
 
 function methods:save_draft(for_verification)
     if self.verifying then return end
-    self:read_connection_fields()
+    self:capture_inputs()
     self:finish_field()
     local config, err = Config.normalize(self.draft)
     if not config or config.server_url == "" then
@@ -464,7 +474,7 @@ function methods:save_draft(for_verification)
         self:refresh()
         return
     end
-    self:release_connection_form()
+    self:release_input_form()
     self:set_saved_connection(saved)
     self.draft = self.settings_store:load("connection")
     self.dirty = false

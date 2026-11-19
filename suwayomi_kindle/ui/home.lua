@@ -14,6 +14,7 @@ local UIManager = require("ui/uimanager")
 local VerticalGroup = require("ui/widget/verticalgroup")
 
 local Config = require("suwayomi_kindle/config")
+local Pager = require("suwayomi_kindle/ui/pager")
 local Header = require("suwayomi_kindle/ui/header")
 local Settings = require("suwayomi_kindle/ui/settings")
 local TabBar = require("suwayomi_kindle/ui/tab_bar")
@@ -57,7 +58,7 @@ end
 
 function Home:handleEvent(event)
     if event.handler == "onCloseWidget" then
-        self:release_connection_form()
+        self:release_input_form()
     end
     return InputContainer.handleEvent(self, event)
 end
@@ -69,6 +70,7 @@ function Home:onCloseWidget()
 end
 
 function Home:set_tab(tab_id)
+    self.menu_open = false
     if self.selected_tab == tab_id then
         if tab_id == "settings" and self.settings_route ~= "index" then
             self.settings_route = "index"
@@ -94,12 +96,13 @@ end
 function Home:page_title()
     if self.selected_tab == "settings" then
         return self.settings_route == "connection" and "连接"
+            or self.settings_route == "languages" and "源语言"
             or self.settings_route == "download" and "下载"
             or self.settings_route == "library" and "书架"
             or self.settings_route == "browse" and "浏览"
             or "设置"
     elseif self.detail then
-        return self.detail.title
+        return "漫画详情"
     elseif self.selected_tab == "browse" then
         return self.browse.source and self.browse.source.name or "浏览"
     end
@@ -111,8 +114,8 @@ function Home:refresh()
         return
     end
 
-    self:read_connection_fields()
-    self:release_connection_form()
+    self:capture_inputs()
+    self:release_input_form()
     if self.cropping_widget then self.cropping_widget:reset(); self.cropping_widget = nil end
     local screen = Screen:getSize()
     local tab_bar = TabBar:build{
@@ -127,21 +130,31 @@ function Home:refresh()
     local on_back
     if self.selected_tab == "settings" and self.settings_route ~= "index" then
         on_back = function()
-            self.settings_route = "index"
+            self.settings_route = self.settings_route == "languages" and "browse" or "index"
             self:refresh()
         end
     elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
         on_back = function() self:catalog_back() end
     end
+    local actions = self:catalog_actions()
     local header = Header:build{
         width = screen.w,
         title = self:page_title(),
         on_back = on_back,
+        on_menu = actions and function()
+            self.menu_open = not self.menu_open
+            self:refresh()
+        end,
         on_close = function()
             self:close()
         end,
     }
-    local body_height = main_height - header:getSize().h
+    local menu = self.menu_open and actions and self:build_actions(actions, screen.w)
+    local paginated = self.selected_tab == "settings" and self.settings_route == "languages"
+        or self.selected_tab ~= "settings" and not self.detail and self.settings.connection.server_url ~= ""
+    self.pagination = nil
+    local body_height = main_height - header:getSize().h - (menu and menu:getSize().h or 0)
+        - (paginated and Pager.height() or 0)
     local body
     if self.selected_tab == "settings" then
         if self.settings_route == "index" then
@@ -152,12 +165,22 @@ function Home:refresh()
             body = self:build_download_settings(screen.w, body_height)
         elseif self.settings_route == "library" then
             body = self:build_library_settings(screen.w, body_height)
+        elseif self.settings_route == "languages" then
+            body = self:build_language_picker(screen.w, body_height)
         elseif self.settings_route == "browse" then
             body = self:build_browse_settings(screen.w, body_height)
         end
     else
-        body = self:build_catalog(screen.w, body_height)
+        body = self:build_catalog(screen.w, body_height, body_height + (menu and menu:getSize().h or 0))
     end
+
+    local content = VerticalGroup:new{align = "left"}
+    if paginated then
+        content[#content+1] = Pager.build(self, screen.w, self.pagination or {page = 0, total = 0, busy = true})
+    end
+    content[#content+1] = header
+    if menu then content[#content+1] = menu end
+    content[#content+1] = body
 
     local main_frame = FrameContainer:new{
         width = screen.w,
@@ -165,10 +188,7 @@ function Home:refresh()
         padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        VerticalGroup:new{
-            header,
-            body,
-        },
+        content,
     }
     local root = FrameContainer:new{
         width = screen.w,

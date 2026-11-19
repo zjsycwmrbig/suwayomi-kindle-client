@@ -8,8 +8,9 @@ local Row = require("ui/widget/horizontalgroup")
 local Gap = require("ui/widget/horizontalspan")
 local Column = require("ui/widget/verticalgroup")
 local Space = require("ui/widget/verticalspan")
-local Center = require("ui/widget/container/centercontainer")
-local Text = require("ui/widget/textwidget")
+local Pages = require("suwayomi_kindle/source_pages")
+local Languages = require("suwayomi_kindle/languages")
+local InputText = require("ui/widget/inputtext")
 local Image = require("ui/widget/imagewidget")
 local Icons = require("suwayomi_kindle/ui/icons")
 local Paragraph = require("ui/widget/textboxwidget")
@@ -28,7 +29,7 @@ function Catalog:reset_browse()
 end
 
 function Catalog:cancel_catalog()
-    if self.pending == "sources" and not self.browse.sources then self.browse.requested = false end
+    if self.pending == "sources" and not self.all_sources then self.browse.requested = false end
     if self.pending == "library" then self.shelf_requested = false end
     if self.job then self.job:cancel() end
     if self.poster_job then self.poster_job:cancel() end
@@ -39,6 +40,7 @@ end
 function Catalog:reset_catalog()
     self:cancel_catalog()
     self:reset_browse()
+    self.all_sources = nil
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
     self.shelf_page, self.index = 1, nil
 end
@@ -51,6 +53,7 @@ function Catalog:set_saved_connection(saved)
 end
 
 function Catalog:catalog_back()
+    self.menu_open = false
     self:cancel_catalog()
     self.catalog_message = nil
     if self.detail then
@@ -71,48 +74,114 @@ function Catalog:request_catalog(action, input, done)
         self.pending, self.job = nil, nil
         self.catalog_message = err
         if data then done(data) end
-        self:refresh()
+        if self.input_form and self.input_form.capture and self.input_form.focused then
+            self.input_form.redraw_on_blur = true
+        else
+            self:refresh()
+        end
     end)
 end
 
 local function refresh_shelf(home)
     home.shelf_requested = true
     home:request_catalog("library", {}, function(data)
-        home.catalog_message = "已拉取 " .. data.count .. " 部漫画"
+        home.catalog_message = "已刷新 " .. data.count .. " 部漫画"
     end)
 end
 
-local function fetch_sources(home)
-    home.browse.requested = true
-    home:request_catalog("sources", {language = home.settings.browse.language}, function(data)
-        home.browse.sources = data.sources
-        home.browse.sources_page = 1
+function Catalog:fetch_sources()
+    local b = self.browse
+    b.requested = true
+    self:request_catalog("sources", {language = "all"}, function(data)
+        self.all_sources = data.sources
+        b.sources_page = 1
     end)
 end
 
-local function fetch_page(home, mode, page, search, last_slice)
+local function fetch_page(home, mode, search, size, target, reset)
     local b = home.browse
-    home:request_catalog("source_page", {source = b.source, mode = mode, page = page, search = search}, function(data)
-        b.mode, b.page, b.search, b.results = mode, page, search, data
-        b.slice = last_slice and math.huge or 1
+    home:request_catalog("source_seek", {source = b.source, mode = mode, size = size,
+        search = search, counts = not reset and b.counts or {}, ended = not reset and b.ended,
+        target = target}, function(data)
+        b.mode, b.search, b.page, b.slice = mode, search, data.remote, data.slice
+        b.results, b.counts, b.ended = data.results, data.counts, data.ended
     end)
 end
 
-local function ask_search(home)
-    local Dialog = require("ui/widget/inputdialog")
-    local d
-    local function submit()
-        local query = require("suwayomi_kindle/config").trim(d:getInputText())
-        if query == "" then return end
-        UI:close(d)
-        fetch_page(home, "SEARCH", 1, query)
+local function start_source(home, source)
+    local b = home.browse
+    b.source, b.results, b.counts, b.ended = source, nil, {}, false
+    b.mode, b.page, b.slice, b.search, b.query = "POPULAR", 1, 1, nil, ""
+    fetch_page(home, "POPULAR", nil, home.catalog_size, 1, true)
+end
+
+function Catalog:catalog_actions()
+    if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
+    if self.pending then
+        return {{"取消请求", function()
+            self:cancel_catalog()
+            self.shelf_requested, self.browse.requested = true, true
+            self.catalog_message = "请求已取消"
+            self:refresh()
+        end}}
     end
-    d = Dialog:new{title = "搜索漫画", input = home.browse.search or "", buttons = {{
-        {text = "取消", callback = function() UI:close(d) end},
-        {text = "搜索", is_enter_default = true, callback = submit},
-    }}}
-    UI:show(d)
-    d:onShowKeyboard()
+    if self.detail then
+        if self.selected_tab == "browse" and not self.detail.in_library then
+            return {{"加入书架", function()
+                local item = self.detail
+                self:request_catalog("add", item, function(data)
+                    item.in_library = true
+                    self.catalog_message = data.warning or "已加入书架"
+                end)
+            end}}
+        end
+        return
+    end
+    if self.selected_tab == "library" then
+        return {{"从服务器刷新", function() refresh_shelf(self) end}}
+    end
+    local b = self.browse
+    if not b.source then return {{"刷新漫画源", function() self:fetch_sources() end}} end
+    local actions = {{"刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end},
+        {"热门", function() fetch_page(self, "POPULAR", nil, self.catalog_size, 1, true) end}}
+    if b.source.latest then
+        actions[#actions+1] = {"最新", function() fetch_page(self, "LATEST", nil, self.catalog_size, 1, true) end}
+    end
+    return actions
+end
+
+function Catalog:build_actions(actions, width)
+    local row = Row:new{Gap:new{width = scale(16)}}
+    for _, action in ipairs(actions) do
+        row[#row+1] = Button.new{text = action[1], compact = true, width = math.min(scale(108), math.floor((width-scale(32))/#actions)),
+            show_parent = self, callback = function()
+                self.menu_open = false
+                action[2]()
+            end}
+    end
+    return row
+end
+
+-- The same inline field searches installed sources or the selected source.
+local function search_bar(home, column, width, source, submit)
+    local b = home.browse
+    local key = source and "query" or "source_query"
+    local button_w, gap = scale(58), scale(6)
+    local padding, border = scale(6), scale(1)
+    local field
+    local function apply()
+        local text = require("suwayomi_kindle/config").trim(field:getText():gsub("[\r\n]", ""))
+        home:finish_field()
+        submit(text)
+    end
+    field = InputText:new{parent = home, focused = false, width = width - button_w - gap - 2*(padding+border),
+        height = scale(24), padding = padding, margin = 0, bordersize = border, scroll = true,
+        text = b[key] or "", hint = source and "在这个源中搜索漫画" or "查找漫画源",
+        face = Font:getFace("smallinfofont", 16), enter_callback = apply}
+    home:bind_keyboard_close(field)
+    home.input_form = {fields = {}, capture = function() b[key] = field:getText() end}
+    column[#column+1] = Row:new{field, Gap:new{width = gap},
+        Button.new{text = "搜索", compact = true, width = button_w, show_parent = home, callback = apply}}
 end
 
 local function note(column, width, value)
@@ -133,10 +202,6 @@ local function buttons(home, column, width, actions)
     end
     column[#column + 1] = row
     column[#column + 1] = Space:new{width = scale(6)}
-end
-
-local function pager(home, column, width, prev, next_page)
-    if prev or next_page then buttons(home, column, width, {{"上一页", prev}, {"下一页", next_page}}) end
 end
 
 local function slice(items, page, size)
@@ -170,7 +235,7 @@ local function load_posters(home, items)
         home.poster_job = Worker.start(UI, home.settings.connection, "covers", items, function(data)
             if not home.alive or home.poster_key ~= key then return end
             home.poster_job = nil
-            if data and data.changed then home:refresh() end
+            if data and data.changed and not (home.input_form and home.input_form.focused) then home:refresh() end
         end)
     end)
 end
@@ -183,26 +248,26 @@ local function manga_list(home, column, width, items, grid)
             home.detail, home.catalog_message = item, nil
             home:refresh()
         end
+        local chapters = item.chapters and (item.chapters .. " 章") or "章节数待刷新"
+        if item.unread then chapters = chapters .. " · " .. item.unread .. " 未读" end
         if grid then
             if i % 3 == 1 then tiles = Row:new{}; column[#column + 1] = tiles end
-            tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title,
+            tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = chapters,
                 path = Covers.path(home.settings.connection, item), callback = open}
         else
             local path = Covers.path(home.settings.connection, item)
             local poster = path and Image:new{file = path, width = scale(40), height = scale(56)}
                 or Icons.widget("library", scale(28))
-            column[#column + 1] = SettingRow:new{label = item.title, value = item.author ~= "" and item.author or item.source,
+            column[#column + 1] = SettingRow:new{label = item.title, value = chapters .. "  " .. (item.author ~= "" and item.author or item.source),
                 leading = poster, width = width, callback = open}
         end
     end
     load_posters(home, items)
 end
 
-local function library(home, column, footer, width, size, grid)
+local function library(home, column, width, size, grid)
     home.index = home.index or Index.new(home.settings.connection)
     local data, err = home.index:page(home.shelf_page, size)
-    buttons(home, column, width, {{home.pending and "正在拉取…" or "从服务器拉取书架",
-        not home.pending and function() refresh_shelf(home) end or nil}})
     if not data then note(column, width, err); return end
     home.shelf_page = data.page
     if data.synced == 0 and not home.shelf_requested then
@@ -216,94 +281,80 @@ local function library(home, column, footer, width, size, grid)
     local pages = math.ceil(data.count / size)
     note(column, width, data.count .. " 部漫画")
     manga_list(home, column, width, data.items, grid)
-    local function turn(delta) home.shelf_page = home.shelf_page + delta; home:refresh() end
-    local w = math.floor(width / 3)
-    footer[#footer + 1] = Row:new{
-        Button.new{text = "上一页", width = w, enabled = data.page > 1, show_parent = home,
-            callback = function() if data.page > 1 then turn(-1) end end},
-        Center:new{dimen = Geom:new{w = width - 2 * w, h = scale(38)},
-            Text:new{text = data.page .. " / " .. pages, face = Font:getFace("smallinfofont", 16)}},
-        Button.new{text = "下一页", width = w, enabled = data.page < pages, show_parent = home,
-            callback = function() if data.page < pages then turn(1) end end},
-    }
-    footer[#footer + 1] = Space:new{width = scale(6)}
+    home.pagination = {page = data.page, total = pages, go = function(n)
+        home.shelf_page = n
+        home:refresh()
+    end}
 end
 
 local function sources(home, column, width, size)
     local b = home.browse
-    if not b.requested then
+    search_bar(home, column, width, false, function(query)
+        b.filter, b.sources_page = query:lower(), 1
+        home:refresh()
+    end)
+    if not b.requested and not home.all_sources then
         b.requested = true
-        defer(home, fetch_sources)
+        defer(home, function() home:fetch_sources() end)
     end
-    buttons(home, column, width, {{home.pending and "正在获取…" or "刷新漫画源",
-        not home.pending and function() fetch_sources(home) end or nil}})
-    if not b.sources then return end
-    if #b.sources == 0 then note(column, width, "当前语言下没有漫画源，可在「设置 → 浏览」更改语言。"); return end
-    local items, page, pages = slice(b.sources, b.sources_page, size)
-    note(column, width, #b.sources .. " 个源 · 第 " .. page .. " / " .. pages .. " 页")
-    for _, source in ipairs(items) do
-        column[#column + 1] = SettingRow:new{width = width, label = source.name, value = source.lang,
-            callback = function()
-                b.source, b.results, b.mode, b.page, b.slice, b.search = source, nil, "POPULAR", 1, 1, nil
-                fetch_page(home, "POPULAR", 1)
-            end}
+    if not home.all_sources then return end
+    local items = {}
+    local selected = Languages.set(home.settings.browse.language)
+    for _, source in ipairs(home.all_sources) do
+        if (selected.all or selected[Languages.base(source.lang)])
+            and (source.name:lower():find(b.filter or "", 1, true)) then items[#items+1] = source end
     end
-    local function turn(delta) b.sources_page = page + delta; home:refresh() end
-    pager(home, column, width, page > 1 and function() turn(-1) end, page < pages and function() turn(1) end)
+    if #items == 0 then note(column, width, "没有符合语言和搜索条件的漫画源。"); return end
+    local visible, page, pages = slice(items, b.sources_page, size)
+    home.pagination = {page = page, total = pages, go = function(n) b.sources_page = n; home:refresh() end}
+    for _, source in ipairs(visible) do
+        column[#column+1] = SettingRow:new{width = width, label = source.name, value = source.lang,
+            callback = function() start_source(home, source) end}
+    end
 end
 
 local function source_manga(home, column, width, size, grid)
     local b = home.browse
-    local actions = {{"热门", function() fetch_page(home, "POPULAR", 1) end, b.mode == "POPULAR"}}
-    if b.source.latest then
-        actions[#actions + 1] = {"最新", function() fetch_page(home, "LATEST", 1) end, b.mode == "LATEST"}
-    end
-    actions[#actions + 1] = {"搜索", function() ask_search(home) end, b.mode == "SEARCH"}
-    buttons(home, column, width, actions)
-    if home.pending then note(column, width, "正在获取漫画…") end
+    search_bar(home, column, width, true, function(query)
+        fetch_page(home, query ~= "" and "SEARCH" or "POPULAR", query ~= "" and query or nil, size, 1, true)
+    end)
     if not b.results then return end
-    local items, page, pages = slice(b.results.mangas, b.slice, size)
-    b.slice = page
-    note(column, width, (b.mode == "SEARCH" and "搜索「" .. b.search .. "」 · " or "")
-        .. "源页 " .. b.page .. (pages > 1 and " · 第 " .. page .. " / " .. pages .. " 屏" or ""))
-    if #items == 0 then note(column, width, "这一页没有漫画。") end
-    manga_list(home, column, width, items, grid)
-    local function turn(delta)
-        if page + delta >= 1 and page + delta <= pages then
-            b.slice = page + delta
+    local items, part, parts = slice(b.results.mangas, b.slice, size)
+    b.slice = part
+    local before = Pages.before(b.counts, b.page, size)
+    local total = b.ended and Pages.before(b.counts, #b.counts+1, size) or nil
+    home.pagination = {page = before+part, total = total, busy = home.pending ~= nil, go = function(n)
+        if type(n) == "number" and n > before and n <= before+parts then
+            b.slice = n-before
             home:refresh()
         else
-            fetch_page(home, b.mode, b.page + delta, b.search, delta < 0)
+            fetch_page(home, b.mode, b.search, size, n, false)
         end
-    end
-    pager(home, column, width, (page > 1 or b.page > 1) and function() turn(-1) end,
-        (page < pages or b.results.has_next) and function() turn(1) end)
+    end}
+    note(column, width, b.mode == "SEARCH" and ("搜索 · " .. b.search) or (b.mode == "LATEST" and "最新" or "热门"))
+    if #items == 0 then note(column, width, "没有找到漫画。") end
+    manga_list(home, column, width, items, grid)
 end
 
 local function detail(home, column, width)
     local item = home.detail
-    note(column, width, item.source)
-    note(column, width, item.author)
-    if home.selected_tab == "browse" then
-        local function add()
-            home:request_catalog("add", item, function(data)
-                item.in_library = true
-                home.catalog_message = data.warning or "已加入书架。"
-            end)
-        end
-        buttons(home, column, width, {{item.in_library and "已在书架" or home.pending and "正在加入…" or "加入书架",
-            not item.in_library and not home.pending and add or nil}})
-    end
+    note(column, width, item.title)
+    if item.source and item.source ~= "" then note(column, width, "来源 · " .. item.source) end
+    if item.author and item.author ~= "" then note(column, width, "作者 · " .. item.author) end
+    note(column, width, item.chapters and ("共 " .. item.chapters .. " 章") or "章节数待刷新")
+    if item.unread then note(column, width, "未读 " .. item.unread .. " 章") end
+    if item.in_library then note(column, width, "已在书架") end
     note(column, width, item.description)
 end
 
-function Catalog:build_catalog(screen_width, height)
+function Catalog:build_catalog(screen_width, height, available)
     local width = screen_width - scale(48)
     local column = Column:new{align = "left", Space:new{width = scale(12)}}
-    local footer = Column:new{align = "left"}
     local grid = self.settings[self.selected_tab].view_mode == "grid"
-    local size = grid and 3 * math.max(1, math.floor((height - scale(174)) / scale(150)))
-        or math.max(1, math.floor((height - scale(174)) / scale(66)))
+    local size = grid and 3 * math.max(1, math.floor((available - scale(100)) / scale(172)))
+        or math.max(1, math.floor((available - scale(100)) / scale(66)))
+    self.catalog_size = size
+    note(column, width, self.pending and "正在从服务器获取数据…" or self.catalog_message)
     if self.settings.connection.server_url == "" then
         note(column, width, "先设置 Suwayomi 服务器地址。")
         buttons(self, column, width, {{"前往连接设置", function()
@@ -311,15 +362,17 @@ function Catalog:build_catalog(screen_width, height)
             self:open_connection_settings()
         end}})
     elseif self.detail then detail(self, column, width)
-    elseif self.selected_tab == "library" then library(self, column, footer, width, size, grid)
+    elseif self.selected_tab == "library" then library(self, column, width, size, grid)
     elseif self.browse.source then source_manga(self, column, width, size, grid)
-    else sources(self, column, width, math.max(1, math.floor((height - scale(174)) / scale(66)))) end
-    note(column, width, self.catalog_message)
-    local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = height - footer:getSize().h},
+    else sources(self, column, width, math.max(1, math.floor((available - scale(100)) / scale(66)))) end
+    local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = height},
         show_parent = self, column}
+    if self.input_form then
+        self.input_form.viewport, self.input_form.height = viewport, height
+    end
     self.cropping_widget = viewport
     return Frame:new{width = screen_width, height = height, padding = 0, bordersize = 0,
-        padding_left = scale(24), Column:new{align = "left", viewport, footer}}
+        padding_left = scale(24), viewport}
 end
 
 return Catalog

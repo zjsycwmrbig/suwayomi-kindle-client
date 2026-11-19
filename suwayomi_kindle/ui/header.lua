@@ -58,34 +58,25 @@ function Header:build(options)
     local width = options.width or Screen:getWidth()
     local height = scale(54)
     local button_width = scale(54)
-    local title_width = math.max(scale(120), width - 2 * button_width)
+    local side_width = button_width * (options.on_back and options.on_menu and 2 or 1)
+    local title_width = width - 2 * side_width
     local title = TextWidget:new{
         text = options.title or "",
         face = Font:getFace("smallinfofontbold", 22),
         max_width = title_width - scale(20),
     }
 
-    local left
-    if options.on_back then
-        left = HeaderButton:new{
-            icon_name = "chevron_left",
-            callback = options.on_back,
-            dimen = Geom:new{w = button_width, h = height},
-        }
-    else
-        left = HorizontalSpan:new{ width = button_width }
+    local left = HorizontalGroup:new{}
+    local right = HorizontalGroup:new{}
+    local function icon(group, name, callback)
+        group[#group+1] = HeaderButton:new{icon_name = name, callback = callback,
+            dimen = Geom:new{w = button_width, h = height}}
     end
-
-    local right
-    if options.on_close then
-        right = HeaderButton:new{
-            icon_name = "close",
-            callback = options.on_close,
-            dimen = Geom:new{w = button_width, h = height},
-        }
-    else
-        right = HorizontalSpan:new{ width = button_width }
-    end
+    if options.on_back then icon(left, "chevron_left", options.on_back) end
+    if options.on_menu then icon(left, "menu", options.on_menu) end
+    if #left == 0 then left[1] = HorizontalSpan:new{width = side_width} end
+    if side_width > button_width then right[1] = HorizontalSpan:new{width = side_width - button_width} end
+    icon(right, "close", options.on_close)
 
     local row = HorizontalGroup:new{
         left,

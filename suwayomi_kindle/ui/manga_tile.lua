@@ -22,6 +22,7 @@ function Tile:init()
             Center:new{dimen = Geom:new{w = poster_w, h = poster_h}, cover}},
         Text:new{text = self.title, face = Font:getFace("smallinfofont", 16), max_width = self.width - 4},
     }
+    if self.subtitle then body[#body+1] = Text:new{text = self.subtitle, face = Font:getFace("x_smallinfofont", 13), max_width = self.width - 4} end
     self.dimen = Geom:new{w = self.width, h = body:getSize().h + screen:scaleBySize(6)}
     self[1] = Center:new{dimen = self.dimen, body}
     self.ges_events = {TapManga = {Gesture:new{ges = "tap", range = self.dimen}}}

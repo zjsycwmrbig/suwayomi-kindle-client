@@ -44,3 +44,31 @@ equal(invalid, nil, "rejects incomplete UI login")
 truthy(err:find("用户名", 1, true), "explains missing username")
 
 print("config tests passed")
+
+local Languages = require("suwayomi_kindle/languages")
+local options = Languages.options("zh", {{lang="fil-PH"}})
+assert(options[#options] == "fil")
+local mixed = Languages.toggle("zh", "en", options)
+assert(mixed == "zh,en" and Languages.set(mixed)[Languages.base("zh-Hant")])
+assert(Languages.toggle(mixed, "zh", options) == "en")
+assert(not Languages.set(Languages.toggle("all", "en", options)).en)
+assert(Languages.toggle("all", "all", options) == "")
+
+local Pages = require("suwayomi_kindle/source_pages")
+local calls = {}
+local counts = {5, 1, 3}
+local client = {sourcePage = function(_, input)
+    calls[#calls+1] = input.page
+    local rows = {}
+    for i=1,counts[input.page] do rows[i] = {id = input.page .. "/" .. i} end
+    return {mangas = rows, has_next = input.page < #counts}
+end}
+local first = assert(Pages.fetch(client, {size=2, target=1}))
+assert(first.remote==1 and first.slice==1 and not first.ended and #calls==1)
+local last = assert(Pages.fetch(client,{size=2,target="last",counts=first.counts}))
+assert(last.remote==3 and last.slice==2 and last.ended and #calls==3)
+local jump = assert(Pages.fetch(client,{size=2,target=3,counts=last.counts,ended=true}))
+assert(jump.remote==1 and jump.slice==3 and jump.ended and #calls==4)
+local beyond = assert(Pages.fetch(client,{size=2,target=99,counts=last.counts,ended=true}))
+assert(beyond.remote==3 and beyond.slice==2)
+print("language selection and source pagination tests passed")

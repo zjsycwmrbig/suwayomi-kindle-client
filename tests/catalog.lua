@@ -19,12 +19,13 @@ local client = mock([[{"data":{"sources":{"nodes":[
 assert(#client:sources("zh").sources == 3)
 assert(client:sources("en").sources[1].id == "4")
 assert(#client:sources("all").sources == 4)
-client = mock([[{"data":{"fetchSourceManga":{"hasNextPage":false,"mangas":[{"id":9,"title":"Book","inLibrary":true}]}}}]],
+client = mock([[{"data":{"fetchSourceManga":{"hasNextPage":false,"mangas":[{"id":9,"title":"Book","inLibrary":true,"chapters":{"totalCount":23}}]}}}]],
     function(request)
         local input = request.variables.input
         assert(input.page == 2 and input.type == "SEARCH" and input.source == "11" and input.query == "Book")
     end)
 local results = assert(client:sourcePage{source = {id = "11", name = "Source"}, page = 2, mode = "SEARCH", search = "Book"})
+assert(results.mangas[1].chapters == 23)
 assert(results.mangas[1].in_library and results.mangas[1].id == "9" and not results.has_next)
 assert(mock([[{"data":{"updateManga":{"manga":{"id":9,"inLibrary":true}}}}]]):addManga("9"))
 assert(not mock([[{"data":{"updateManga":{"manga":{"id":2,"inLibrary":true}}}}]]):addManga("9"))
@@ -36,8 +37,16 @@ os.remove(root)
 local ix = Index.new(config, root)
 local other = Index.new({server_url = config.server_url, auth_method = config.auth_method, username = "b"}, root)
 assert(other.path ~= ix.path)
+-- A pre-0.3 shelf remains readable before the first metadata refresh.
+local db = require("lua-ljsqlite3/init").open(ix.path)
+db:exec([[CREATE TABLE manga(id TEXT PRIMARY KEY,title TEXT,author TEXT,source TEXT,thumbnail TEXT);
+    CREATE TABLE shelf(count INTEGER,synced INTEGER); INSERT INTO shelf VALUES(1,123);
+    INSERT INTO manga VALUES('old','Old title','','',''); PRAGMA user_version=1]])
+db:close()
+local migrated = assert(ix:page(1, 9))
+assert(migrated.count == 1 and migrated.synced == 0 and migrated.items[1].chapters == nil)
 local function manga(n)
-    return {id = tostring(n), title = string.format("Book %05d", n), source = "Source", author = "", thumbnail = ""}
+    return {id = tostring(n), title = string.format("Book %05d", n), source = "Source", author = "", thumbnail = "", chapters = n, unread = 0}
 end
 local function page(offset, limit)
     local rows, total = {}, 1203
@@ -46,6 +55,7 @@ local function page(offset, limit)
 end
 assert(ix:refresh(page).count == 1203)
 local visible = assert(ix:page(2, 9))
+assert(visible.items[1].chapters == 10 and visible.items[1].unread == 0)
 assert(visible.count == 1203 and #visible.items == 9 and visible.items[1].id == "10")
 assert(other:page(1, 9).count == 0)
 local function incomplete(second)

@@ -10,6 +10,8 @@ function Worker.run(config, action, input)
     if not client then return nil, err end
     if action == "sources" then
         return client:sources(input.language)
+    elseif action == "source_seek" then
+        return require("suwayomi_kindle/source_pages").fetch(client, input)
     elseif action == "source_page" then
         return client:sourcePage(input)
     elseif action == "library" then
@@ -56,7 +58,7 @@ function Worker.start(ui, config, action, input, callback)
         pid = FFI.runInSubProcess(function() Worker.writeResult(file, config, action, input) end)
     end
     if not pid then file:close(); callback(nil, "无法启动后台任务。"); return end
-    local job = {deadline = os.time() + (action == "library" and 300 or 60)}
+    local job = {deadline = os.time() + ((action == "library" or action == "source_seek") and 300 or 60)}
     function job:cancel()
         if self.cancelled or self.finished then return end
         self.cancelled = true

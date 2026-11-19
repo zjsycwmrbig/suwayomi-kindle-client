@@ -20,13 +20,20 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) == 0 then
-            db:exec([[PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;
-                CREATE TABLE IF NOT EXISTS manga(id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT, source TEXT, thumbnail TEXT);
-                CREATE INDEX IF NOT EXISTS title_idx ON manga(title COLLATE NOCASE, id);
-                CREATE TABLE IF NOT EXISTS shelf(count INTEGER, synced INTEGER);
-                INSERT INTO shelf SELECT 0, 0 WHERE NOT EXISTS (SELECT 1 FROM shelf);
-                PRAGMA user_version=1; COMMIT]])
+        if tonumber(db:rowexec("PRAGMA user_version")) < 2 then
+            db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
+            local version = tonumber(db:rowexec("PRAGMA user_version"))
+            if version == 0 then
+                db:exec([[CREATE TABLE manga(id TEXT PRIMARY KEY, title TEXT NOT NULL, author TEXT,
+                        source TEXT, thumbnail TEXT, chapters INTEGER, unread INTEGER);
+                    CREATE INDEX title_idx ON manga(title COLLATE NOCASE, id);
+                    CREATE TABLE shelf(count INTEGER, synced INTEGER);
+                    INSERT INTO shelf VALUES(0, 0)]])
+            elseif version == 1 then
+                db:exec([[ALTER TABLE manga ADD COLUMN chapters INTEGER;
+                    ALTER TABLE manga ADD COLUMN unread INTEGER; UPDATE shelf SET synced=0]])
+            end
+            db:exec("PRAGMA user_version=2; COMMIT")
         end
         return action(db)
     end)
@@ -37,14 +44,14 @@ local function with_db(index, action)
 end
 
 local function insert(stmt, item)
-    stmt:reset():bind(item.id, item.title, item.author, item.source, item.thumbnail):step()
+    stmt:reset():bind(item.id, item.title, item.author, item.source, item.thumbnail, item.chapters, item.unread):step()
 end
 
 function Index:refresh(fetch, limit)
     limit = limit or 64
     return with_db(self, function(db)
         db:exec("BEGIN IMMEDIATE; DELETE FROM manga")
-        local stmt = db:prepare("INSERT INTO manga VALUES(?,?,?,?,?)")
+        local stmt = db:prepare("INSERT INTO manga VALUES(?,?,?,?,?,?,?)")
         local offset, total = 0, nil
         repeat
             local page, err = fetch(offset, limit)
@@ -69,7 +76,7 @@ function Index:upsert(item)
     return with_db(self, function(db)
         db:exec("BEGIN IMMEDIATE")
         local known = db:prepare("SELECT 1 FROM manga WHERE id=?"):bind(item.id):step()
-        insert(db:prepare("INSERT OR REPLACE INTO manga VALUES(?,?,?,?,?)"), item)
+        insert(db:prepare("INSERT OR REPLACE INTO manga VALUES(?,?,?,?,?,?,?)"), item)
         if not known then db:exec("UPDATE shelf SET count=count+1") end
         db:exec("COMMIT")
         return true
@@ -82,12 +89,12 @@ function Index:page(page, limit)
         local count, synced = db:rowexec("SELECT count,synced FROM shelf")
         count, synced = tonumber(count), tonumber(synced)
         page = math.max(1, math.min(page, math.ceil(count / limit)))
-        local stmt = db:prepare([[SELECT id,title,author,source,thumbnail FROM manga
+        local stmt = db:prepare([[SELECT id,title,author,source,thumbnail,chapters,unread FROM manga
             ORDER BY title COLLATE NOCASE,id LIMIT ? OFFSET ?]]):bind(limit, (page - 1) * limit)
         local items = {}
         for r in stmt:rows() do
             items[#items + 1] = {id = r[1], title = r[2], author = r[3], source = r[4],
-                thumbnail = r[5], in_library = true}
+                thumbnail = r[5], chapters = tonumber(r[6]), unread = tonumber(r[7]), in_library = true}
         end
         return {count = count, synced = synced, page = page, items = items}
     end)
