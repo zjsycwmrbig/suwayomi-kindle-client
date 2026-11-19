@@ -140,13 +140,15 @@ function Catalog:catalog_actions()
         end},pin}
     end
     if self.directory then
-        return {{icon="refresh","刷新章节",function() self:refresh_directory(true) end},
+        local actions = {{icon="refresh","刷新章节",function() self:refresh_directory(true) end},
             {icon="popular",self.directory.unread_only and "显示全部章节" or "只看未读章节",function()
                 self.directory.unread_only = not self.directory.unread_only
                 self.directory.page,self.directory.target = 1,nil
                 self:refresh()
             end},
             {icon="latest","定位首个未读",function() self:locate_unread(false); self:refresh() end}}
+        self:add_download_actions(actions)
+        return actions
     elseif self.detail then
         return {{icon="refresh","刷新详情",function() self:refresh_detail() end}}
     end

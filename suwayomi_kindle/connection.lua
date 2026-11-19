@@ -103,6 +103,8 @@ local function graphql_failure(payload)
     then
         return "认证失败，请检查用户名、密码和认证方式。"
     end
+    if combined:find("not found",1,true) or combined:find("no such",1,true) then return "服务器找不到该记录。" end
+    if combined:find("validation",1,true) or combined:find("unknown field",1,true) then return "服务器接口或字段不兼容。" end
     return "服务器返回了 GraphQL 错误。"
 end
 
@@ -368,7 +370,7 @@ function Connection:chapterPage(id, offset, limit)
     local data, err = self:request([[query($id:Int!,$first:Int!,$offset:Int!){
         chapters(filter:{mangaId:{equalTo:$id}},first:$first,offset:$offset,
         order:[{by:SOURCE_ORDER,byType:ASC},{by:ID,byType:ASC}]){
-        totalCount pageInfo{hasNextPage} nodes{id name scanlator isRead}}}]],
+        totalCount pageInfo{hasNextPage} nodes{id name scanlator isRead lastPageRead}}}]],
         {id = tonumber(id), offset = offset, first = limit})
     local page = data and data.chapters
     if not page or not is_array(page.nodes) or type(page.totalCount) ~= "number"
@@ -376,12 +378,31 @@ function Connection:chapterPage(id, offset, limit)
     return page
 end
 
-function Connection:setRead(id, read)
-    local data, err = self:request([[mutation($id:Int!,$read:Boolean!){
-        updateChapter(input:{id:$id,patch:{isRead:$read}}){chapter{id isRead}}}]], {id = id, read = read})
+function Connection:chapterOwners(ids)
+    local data,err = self:request([[query($ids:[Int!]!){
+        chapters(first:32,filter:{id:{in:$ids}}){nodes{id manga{id}}}}]],{ids=ids})
+    local nodes = data and data.chapters and data.chapters.nodes
+    if not is_array(nodes) then return nil,err or "服务器未返回章节归属。" end
+    local owners = {}
+    for _,node in ipairs(nodes) do owners[node.id]=tostring(node.manga.id) end
+    return owners
+end
+
+function Connection:updateRecord(id, read, page, manga)
+    local data, err = self:request([[mutation($input:UpdateChapterInput!){
+        updateChapter(input:$input){chapter{id isRead lastPageRead manga{id}}}}]],
+        {input = {id = id, patch = {isRead = read, lastPageRead = page}}})
     local row = data and data.updateChapter and data.updateChapter.chapter
-    if not row or row.id ~= id or row.isRead ~= read then return nil, err or "服务器未确认阅读状态。" end
+    if not row or row.id ~= id or (read ~= nil and row.isRead ~= read)
+        or (page ~= nil and row.lastPageRead ~= page)
+        or (manga and tostring(row.manga and row.manga.id) ~= manga) then
+        return nil, err or "服务器未确认该章节的阅读记录。"
+    end
     return true
+end
+
+function Connection:setRead(id, read)
+    return self:updateRecord(id,read)
 end
 
 function Connection:pageImage(path)
@@ -394,7 +415,8 @@ function Connection:pageImage(path)
     else return end
     local headers = url:sub(1,#base+1) == base .. "/" and auth_headers(self.settings, self.session) or {}
     local r = (self.transport or perform_http_request)(url, nil, headers, 24 * 1024 * 1024)
-    return r.ok and r.body or nil
+    if not r.ok then return nil,verify_payload(r).error end
+    return r.body
 end
 
 function Connection:thumbnail(id)

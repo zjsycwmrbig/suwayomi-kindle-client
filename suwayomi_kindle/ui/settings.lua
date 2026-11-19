@@ -43,7 +43,6 @@ end
 
 function methods:build_settings_index(screen_width, body_height)
     local width = screen_width - scale(48)
-    local inset = math.floor((screen_width - width) / 2)
     local status = "尚未验证"
     if Config.trim(self.draft.server_url) == "" then
         status = "未设置服务器"
@@ -58,10 +57,7 @@ function methods:build_settings_index(screen_width, body_height)
     local library = self.settings.library
     local browse = self.settings.browse
     local browse_lang = Languages.summary(browse.language)
-    return Frame:new{
-        width = screen_width, height = body_height, bordersize = 0, padding = 0,
-        padding_left = inset, padding_right = screen_width - width - inset,
-        Column:new{
+    local content = Column:new{
             spacing(12),
             SettingRow:new{
                 label = "连接", value = status, width = width,
@@ -90,11 +86,14 @@ function methods:build_settings_index(screen_width, body_height)
                 callback = function() self.settings_route = "browse"; self:refresh() end,
             },
             rule(width),
+            SettingRow:new{label = "同步", value = "阅读记录、书架与同步日志", width = width,
+                callback = function() self.settings_route = "sync"; self:refresh() end},
+            rule(width),
             SettingRow:new{label = "主题", value = self.settings.theme.mode == "night" and "黑夜" or "白天", width = width,
                 callback = function() self.settings_route = "theme"; self:refresh() end},
             rule(width),
-        },
     }
+    return self:settings_page_frame(screen_width,body_height,width,content)
 end
 
 local function save_section(home, section, patch)
@@ -106,6 +105,12 @@ local function save_section(home, section, patch)
     end
     if section == "browse" and saved.language ~= home.settings.browse.language then home:reset_browse() end
     home.settings[section] = saved
+    if section == "download" and home.settings.connection.server_url ~= "" then
+        local queue=require("suwayomi_kindle/queue")
+        local index=home:local_index()
+        queue.start(queue.attach(index,home.settings.connection,saved,home))
+        if patch.retention then queue.reconcile(index,home.settings.connection,saved) end
+    end
     if section == "theme" then home:apply_night_mode(saved.mode == "night") end
     home:refresh()
     return true

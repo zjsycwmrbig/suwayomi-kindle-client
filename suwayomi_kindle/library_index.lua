@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 3 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 4 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -40,7 +40,19 @@ local function with_db(index, action)
                     scanlator TEXT, is_read INTEGER, PRIMARY KEY(manga,id), UNIQUE(manga,pos));
                 CREATE INDEX IF NOT EXISTS unread_pos ON chapter(manga,is_read,pos);
                 CREATE TABLE IF NOT EXISTS files(manga TEXT,id INTEGER,path TEXT,PRIMARY KEY(manga,id));
-                PRAGMA user_version=3; COMMIT]])
+                CREATE INDEX IF NOT EXISTS files_path ON files(path);]])
+            if version < 4 then
+                db:exec([[ALTER TABLE chapter ADD COLUMN last_page INTEGER;
+                    CREATE TABLE pending(seq INTEGER PRIMARY KEY AUTOINCREMENT,manga TEXT,id INTEGER,
+                        is_read INTEGER,page INTEGER,UNIQUE(manga,id));
+                    CREATE TABLE policy(manga TEXT PRIMARY KEY,ahead INTEGER DEFAULT 0,retention TEXT DEFAULT 'inherit');
+                    CREATE TABLE queue(manga TEXT,id INTEGER,priority INTEGER,state TEXT,error TEXT,PRIMARY KEY(manga,id));
+                    CREATE INDEX queue_state ON queue(state,priority,id);
+                    CREATE TABLE file_stamp(manga TEXT,id INTEGER,bytes INTEGER,mtime INTEGER,inode TEXT,PRIMARY KEY(manga,id));
+                    CREATE TABLE finished(manga TEXT,id INTEGER,at INTEGER,PRIMARY KEY(manga,id));
+                    CREATE TABLE sync_log(seq INTEGER PRIMARY KEY,at INTEGER,message TEXT);]])
+            end
+            db:exec("PRAGMA user_version=4; COMMIT")
         end
         return action(db)
     end)
@@ -57,8 +69,8 @@ end
 function Index:refresh(fetch, limit)
     limit = limit or 64
     return with_db(self, function(db)
-        db:exec("BEGIN IMMEDIATE; DELETE FROM manga")
-        local stmt = db:prepare("INSERT INTO manga VALUES(?,?,?,?,?,?,?)")
+        db:exec("CREATE TEMP TABLE incoming AS SELECT * FROM manga LIMIT 0")
+        local stmt = db:prepare("INSERT INTO incoming VALUES(?,?,?,?,?,?,?)")
         local offset, total = 0, nil
         repeat
             local page, err = fetch(offset, limit)
@@ -73,6 +85,9 @@ function Index:refresh(fetch, limit)
             for _, item in ipairs(page.rows) do insert(stmt, item) end
             offset = next_offset
         until offset == total
+        db:exec("BEGIN IMMEDIATE; DELETE FROM manga; INSERT INTO manga SELECT * FROM incoming")
+        db:exec([[UPDATE manga SET unread=(SELECT count(*) FROM chapter c WHERE c.manga=manga.id AND is_read=0)
+            WHERE id IN (SELECT DISTINCT manga FROM pending) AND id IN (SELECT id FROM directories)]])
         db:prepare("UPDATE shelf SET count=?, synced=?"):bind(total, os.time()):step()
         db:exec("COMMIT")
         return {count = total}

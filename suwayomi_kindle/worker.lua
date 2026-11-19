@@ -9,7 +9,11 @@ function Worker.run(config, action, input)
     if action == "verify" then return Connection.test(config) end
     local client, err = Connection.open(config)
     if not client then return nil, err end
-    if action == "sources" then
+    if action == "sync_push" then
+        return require("suwayomi_kindle/records").push(Index.new(config),client,input.cutoff)
+    elseif action == "sync_pull" then
+        return require("suwayomi_kindle/records").pull(Index.new(config),client,input.cutoff)
+    elseif action == "sources" then
         return client:sources(input.language)
     elseif action == "source_seek" then
         return require("suwayomi_kindle/source_pages").fetch(client, input)
@@ -78,7 +82,7 @@ function Worker.start(ui, config, action, input, callback)
         pid = FFI.runInSubProcess(function() Worker.writeResult(file, config, action, input) end)
     end
     if not pid then file:close(); callback(nil, "无法启动后台任务。"); return end
-    local job = {deadline = os.time() + (action == "download" and 1200 or (action == "library" or action == "source_seek" or action == "chapters") and 300 or 60)}
+    local job = {deadline = os.time() + ((action == "download" or action == "sync_pull" or action == "sync_push") and 1200 or (action == "library" or action == "source_seek" or action == "chapters") and 300 or 60)}
     function job:cancel()
         if self.cancelled or self.finished then return end
         self.cancelled = true

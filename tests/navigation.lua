@@ -50,8 +50,8 @@ local viewport, tree = home.cropping_widget, home[1]
 local function open()
     find(home, "icon_name", "menu").callback()
     local drawer = assert(home.drawer)
-    drawer:paintTo(device.screen.bb, 0, 0)
-    assert(drawer.dimen.w < device.screen:getWidth() and drawer.dimen.h == device.screen:getHeight())
+    drawer:paintTo(device.screen.bb, 0, home.drawer_top)
+    assert(drawer.dimen.w < device.screen:getWidth() and drawer.dimen.y == home.drawer_top and drawer.dimen.h == home.drawer_height)
     return drawer
 end
 local drawer = open()
@@ -99,6 +99,35 @@ assert(find(home,"label","第24话"))
 home:catalog_back()
 find(home,"text","全部章节").callback()
 assert(home.pagination.page == 1 and find(home,"label","第1话"))
+home.catalog_actions=nil
+local menu=open()
+assert(not find(menu,"text","全部章节"))
+find(menu,"label","自动下载").callback()
+for _,count in ipairs({1,3,5}) do assert(find(menu,"label",count .. " 章")) end
+find(menu,"label","3 章").callback()
+local downloads=require("suwayomi_kindle/downloads")
+assert(downloads.policy(home.index,"41").ahead==3)
+menu=open()
+find(menu,"label","删除策略").callback()
+find(menu,"label","保留 5 章").callback()
+assert(downloads.policy(home.index,"41").retention=="5")
+local first=find(home,"label","第1话")
+local function parent_of(widget,element)
+    for _,child in ipairs(widget) do
+        if child==element then return widget end
+        local parent=parent_of(child,element)
+        if parent then return parent end
+    end
+end
+local row=assert(parent_of(home,first))
+assert(row[2].text=="下载" and row[3].icon_name=="chevron_right")
+row[3].callback()
+local more=UI:getTopmostVisibleWidget()
+assert(find(more,"text","标记之前为已读") and find(more,"text","标记之后为未读"))
+assert(not find(more,"text","返回目录"))
+UI:close(more)
+row[2].callback()
+assert(require("suwayomi_kindle/chapters").page(home.index,"41",1,1).items[1].state=="queued")
 local opened
 home.open_local = function(_,path) opened=path end
 local file = os.tmpname()
@@ -111,7 +140,36 @@ home:catalog_back()
 find(home,"text","继续阅读").callback()
 assert(opened == file)
 os.remove(file)
+-- Exercise the same ReaderReady/CloseDocument hooks used by KOReader, including
+-- a pending page restored after reopening and completion on the last page.
+local reader=require("suwayomi_kindle/reader")
+local path=chapters.downloadPath(home.index,{manga="41",id=24,directory=require("datastorage"):getDataDir()})
+assert(home.index:with_db(function(db)
+    db:prepare("UPDATE files SET path=? WHERE manga=? AND id=?"):bind(path,"41",24):step()
+    return true
+end))
+local page=4
+local mock={settings_store={load=function(_,section) return home.settings[section] end},ui={
+    document={file=path,getPageCount=function() return 8 end},
+    getCurrentPage=function() return page end,
+    paging={onGotoPage=function(_,p) page=p end},
+    registerPostReaderReadyCallback=function(_,cb) cb() end,
+}}
+reader.onReaderReady(mock)
+reader.onCloseDocument(mock)
+page=1
+reader.onReaderReady(mock)
+assert(page==4)
+page=8
+reader.onCloseDocument(mock)
+assert(chapters.nextUnread(home.index,"41").id==25)
+local pending=require("suwayomi_kindle/records").status(home.index)
+assert(pending.count==1)
 home:set_tab("settings")
+home.settings_route="sync"
+home:refresh()
+home:paintTo(device.screen.bb,0,0)
+assert(find(home,"label","同步本地记录") and find(home,"label","从服务器同步"))
 home.settings_route = "theme"
 home:refresh()
 local normal = home.previous_night_mode

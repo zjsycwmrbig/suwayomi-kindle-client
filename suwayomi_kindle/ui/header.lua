@@ -53,6 +53,8 @@ function HeaderButton:onTapHeaderButton()
     return true
 end
 
+Header.IconButton = HeaderButton
+
 function Header:build(options)
     local function scale(px) return Screen:scaleBySize(px) end
     local width = options.width or Screen:getWidth()

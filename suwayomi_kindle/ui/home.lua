@@ -52,6 +52,11 @@ function Home:init()
     if Config.trim(self.draft.server_url) == "" then
         self.selected_tab = "settings"
     end
+    if self.settings.connection.server_url ~= "" then
+        local queue = require("suwayomi_kindle/queue")
+        queue.start(queue.attach(self:local_index(),self.settings.connection,self.settings.download,self))
+        require("suwayomi_kindle/sync_service").schedule(self.index,self.settings.connection)
+    end
     self:refresh()
 end
 
@@ -75,6 +80,8 @@ function Home:handleEvent(event)
 end
 
 function Home:onCloseWidget()
+    require("suwayomi_kindle/queue").detach(self.index,self)
+    require("suwayomi_kindle/sync_service").detach(self.index,self)
     self:close_drawer()
     if self.verification_job then self.verification_job:cancel(); self.verification_job = nil end
     self:cancel_catalog()
@@ -106,7 +113,7 @@ function Home:open_drawer()
     if self.drawer or not actions then return end
     self:finish_field()
     self.drawer = Drawer:new{owner = self, actions = actions}
-    UIManager:show(self.drawer, "ui", self.drawer.dimen)
+    UIManager:show(self.drawer, "ui", self.drawer.dimen, 0, self.drawer.dimen.y)
 end
 
 function Home:close_drawer()
@@ -124,6 +131,7 @@ function Home:page_title()
             or self.settings_route == "languages" and "源语言"
             or self.settings_route == "download" and "下载"
             or self.settings_route == "library" and "书架"
+            or self.settings_route == "sync" and "同步"
             or self.settings_route == "theme" and "主题"
             or self.settings_route == "browse" and "浏览"
             or "设置"
@@ -185,7 +193,9 @@ function Home:refresh()
             self:close()
         end,
     }
-    local paginated = self.selected_tab == "settings" and self.settings_route == "languages"
+    self.drawer_top = header:getSize().h
+    self.drawer_height = main_height - self.drawer_top
+    local paginated = self.selected_tab == "settings" and (self.settings_route == "languages" or self.settings_route == "sync")
         or self.selected_tab ~= "settings" and (not self.detail or self.directory) and self.settings.connection.server_url ~= ""
     self.pagination = nil
     local footer = self.detail and not self.directory and self:detail_footer(screen.w)
@@ -203,6 +213,8 @@ function Home:refresh()
             body = self:build_library_settings(screen.w, body_height)
         elseif self.settings_route == "languages" then
             body = self:build_language_picker(screen.w, body_height)
+        elseif self.settings_route == "sync" then
+            body = self:build_sync(screen.w, body_height)
         elseif self.settings_route == "theme" then
             body = self:build_theme_settings(screen.w, body_height)
         elseif self.settings_route == "browse" then
@@ -256,6 +268,8 @@ for name, method in pairs(require("suwayomi_kindle/ui/catalog")) do
 end
 
 for name, method in pairs(require("suwayomi_kindle/ui/manga")) do Home[name] = method end
+
+for name, method in pairs(require("suwayomi_kindle/ui/sync")) do Home[name] = method end
 
 for name, method in pairs(Settings.methods) do
     Home[name] = method
