@@ -44,6 +44,8 @@ function Catalog:reset_catalog()
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
     self.shelf_page, self.index = 1, nil
     self.task_page,self.task_view,self.task_message=1,"queue",nil
+    self.task_filter,self.task_file_scope="all","managed"
+    self.task_selection,self.task_editing={},false
 end
 
 function Catalog:set_saved_connection(saved)

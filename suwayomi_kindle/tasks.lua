@@ -1,5 +1,6 @@
 local lfs = require("libs/libkoreader-lfs")
 local Tasks = {}
+local filters = {all=true,active=true,queued=true,paused=true,failed=true}
 
 function Tasks.directory(configured)
     local path = configured
@@ -19,20 +20,58 @@ local queries = {
     orphan = {from = "orphan", fields = "NULL,NULL,NULL,NULL,'orphan',reason,path", order = "path"},
 }
 
-function Tasks.page(index,view,page,limit)
+local queue_where = {
+    all = nil,
+    active = "q.state='active'",
+    queued = "q.state='queued' AND (SELECT paused FROM queue_control)=0",
+    paused = "q.state='paused' OR (q.state='queued' AND (SELECT paused FROM queue_control)=1)",
+    failed = "q.state='failed'",
+}
+
+function Tasks.counts(index)
+    return index:with_db(function(db)
+        return {
+            queue=tonumber(db:rowexec("SELECT count(*) FROM queue")),
+            files=tonumber(db:rowexec("SELECT count(*) FROM files")),
+        }
+    end)
+end
+
+function Tasks.page(index,view,page,limit,options)
+    options = options or {}
+    if view == "orphan" then view,options.file_scope="files","orphan" end
     local query = assert(queries[view])
+    local filter = options.filter or "all"
+    assert(filters[filter])
+    local scope = options.file_scope or "managed"
+    local from,where,count_from = query.from,queue_where[filter],"queue q"
+    if view == "files" then
+        if scope == "orphan" then
+            from,where,count_from = queries.orphan.from,queue_where.all,"orphan"
+            query = queries.orphan
+        else
+            where = queue_where.all
+            count_from = "files f"
+        end
+    end
     return index:with_db(function(db)
         db:exec("BEGIN")
-        local count = tonumber(db:rowexec("SELECT count(*) FROM " .. ({queue="queue",files="files",orphan="orphan"})[view]))
+        local count = tonumber(db:rowexec("SELECT count(*) FROM " .. count_from
+            .. (where and " WHERE " .. where or "")))
         local pages = math.max(1,math.ceil(count/limit))
         page = math.min(pages,math.max(1,page))
-        local stmt = db:prepare("SELECT " .. query.fields .. " FROM " .. query.from ..
+        local stmt = db:prepare("SELECT " .. query.fields .. " FROM " .. from
+            .. (where and " WHERE " .. where or "") ..
             " ORDER BY " .. query.order .. " LIMIT ? OFFSET ?"):bind(limit,(page-1)*limit)
         local rows = {}
         for r in stmt:rows() do
-            rows[#rows+1] = {manga=r[1],id=tonumber(r[2]),title=r[3],name=r[4],state=r[5],reason=r[6],path=r[7]}
+            local item = {manga=r[1],id=tonumber(r[2]),title=r[3],name=r[4],state=r[5],reason=r[6],path=r[7]}
+            if scope == "orphan" then item.key="orphan:" .. item.path
+            elseif item.manga and item.id then item.key=view .. ":" .. item.manga .. ":" .. item.id end
+            rows[#rows+1] = item
         end
-        return {rows=rows,page=page,pages=pages,count=count,paused=tonumber(db:rowexec("SELECT paused FROM queue_control"))==1,
+        return {rows=rows,page=page,pages=pages,count=count,filter=filter,file_scope=scope,
+            paused=tonumber(db:rowexec("SELECT paused FROM queue_control"))==1,
             scanned=tonumber((db:rowexec("SELECT max(at) FROM scan_status")))}
     end)
 end
@@ -55,6 +94,74 @@ function Tasks.setPaused(index,paused,task)
         end
         db:exec("COMMIT")
         return true
+    end)
+end
+
+function Tasks.retry(index,selections)
+    return index:with_db(function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local retry=db:prepare([[UPDATE queue SET state='queued',ticket=NULL,error=NULL
+            WHERE manga=? AND id=? AND state IN ('failed','paused')]])
+        local count=0
+        for _,item in pairs(selections or {}) do
+            if item.manga and item.id then
+                retry:reset():bind(item.manga,item.id):step()
+                count=count+(tonumber(db:rowexec("SELECT changes()")) or 0)
+            end
+        end
+        db:exec("COMMIT")
+        return {count=count}
+    end)
+end
+
+local function normalized(path)
+    return path and path:gsub("/+$","")
+end
+
+local function inside(path,root)
+    path,root=normalized(path),normalized(root)
+    return path and root and path:sub(1,#root+1)==root .. "/"
+end
+
+-- Delete only the exact indexed copy or a scanned orphan below this account's
+-- configured download root. The open reader file and unknown paths are kept.
+function Tasks.deleteFiles(index,selections,root,open_path)
+    return index:with_db(function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local count,failed,kept=0,0,0
+        local scope=index.path:match("/(%x+)%.sqlite3$")
+        for _,item in pairs(selections or {}) do
+            local path=item.path
+            local indexed
+            if item.manga and item.id then
+                indexed=db:prepare("SELECT path FROM files WHERE manga=? AND id=?"):bind(item.manga,item.id):step()
+                indexed=indexed and indexed[1]
+            else
+                indexed=db:prepare("SELECT path FROM orphan WHERE path=?"):bind(path):step()
+                indexed=indexed and indexed[1]
+            end
+            local acceptable=path and indexed==path
+            if acceptable and item.manga and item.id and scope then
+                acceptable=path:sub(-#("/Suwayomi/"..scope.."/"..item.manga.."/"..item.id..".cbz"))
+                    =="/Suwayomi/"..scope.."/"..item.manga.."/"..item.id..".cbz"
+            elseif acceptable then acceptable=inside(path,root) end
+            local stat=acceptable and lfs.symlinkattributes(path)
+            if path==open_path then
+                kept=kept+1
+            elseif not acceptable or not stat or stat.mode~="file" then
+                failed=failed+1
+            elseif os.remove(path) then
+                if item.manga and item.id then
+                    db:prepare("DELETE FROM files WHERE manga=? AND id=? AND path=?"):bind(item.manga,item.id,path):step()
+                    db:prepare("DELETE FROM file_stamp WHERE manga=? AND id=?"):bind(item.manga,item.id):step()
+                else
+                    db:prepare("DELETE FROM orphan WHERE path=?"):bind(path):step()
+                end
+                count=count+1
+            else failed=failed+1 end
+        end
+        db:exec("COMMIT")
+        return {count=count,failed=failed,kept=kept}
     end)
 end
 

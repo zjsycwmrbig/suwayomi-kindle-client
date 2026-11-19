@@ -181,10 +181,10 @@ function Manga:add_download_actions(actions)
     actions[#actions+1]={"自动下载",children=function()
         return options("ahead",{{0,"关闭"},{1,"1 章"},{3,"3 章"},{5,"5 章"}})
     end}
-    actions[#actions+1]={"全部下载",function()
+    actions[#actions+1]={icon="download","全部下载",function()
         confirm("下载《" .. self.detail.title .. "》的全部缺失章节？",function() self:queue_chapters("all"); self:refresh() end)
     end}
-    actions[#actions+1]={"删除已读",function()
+    actions[#actions+1]={icon="trash","删除已读",function()
         confirm("删除本漫画所有已读章节的本地 CBZ？",function() self:clean_chapters(true); self:refresh() end)
     end}
     actions[#actions+1]={"删除策略",children=function()

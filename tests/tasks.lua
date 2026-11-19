@@ -4,6 +4,7 @@ local Index=require("suwayomi_kindle/library_index")
 local Chapters=require("suwayomi_kindle/chapters")
 local Tasks=require("suwayomi_kindle/tasks")
 local Downloads=require("suwayomi_kindle/downloads")
+local lfs=require("libs/libkoreader-lfs")
 local tmp=os.tmpname()
 os.remove(tmp)
 local ix=Index.new({server_url="http://example.test",auth_method="none"},tmp)
@@ -35,7 +36,19 @@ assert(Downloads.finish(ix,active,"late failure"))
 assert(Chapters.page(ix,"7",1,5).items[1].state=="active" and not Downloads.claim(ix))
 assert(Downloads.finish(ix,retry,nil))
 assert(Tasks.setPaused(ix,false))
-assert(Downloads.claim(ix).id==17)
+local last=assert(Downloads.claim(ix))
+assert(last.id==17)
+assert(Downloads.finish(ix,last,"forced failure"))
+local failed=assert(Tasks.page(ix,"queue",1,5,{filter="failed"}))
+assert(failed.count==1 and failed.rows[1].key=="queue:7:17")
+local retried=assert(Tasks.retry(ix,{[failed.rows[1].key]=failed.rows[1]}))
+assert(retried.count==1)
+assert(Tasks.page(ix,"queue",1,5,{filter="failed"}).count==0)
+assert(Tasks.page(ix,"queue",1,5,{filter="queued"}).count==1)
+assert(Tasks.setPaused(ix,true))
+assert(Tasks.page(ix,"queue",1,5,{filter="queued"}).count==0)
+assert(Tasks.page(ix,"queue",1,5,{filter="paused"}).count==1)
+assert(Tasks.setPaused(ix,false))
 
 local root=tmp.."/books"
 local function path(manga,id)
@@ -56,7 +69,23 @@ for page=1,2 do
     for _,item in ipairs(Tasks.page(ix,"orphan",page,2).rows) do reasons[item.reason]=true end
 end
 assert(reasons["漫画不在书架"] and reasons["章节不在目录"] and reasons["本地文件未登记"])
+local files=Tasks.page(ix,"files",1,10)
+assert(files.count==3)
+local selected
+for _,item in ipairs(files.rows) do
+    if item.manga=="7" and item.id==50 then selected=item end
+end
+assert(selected)
+local deleted=assert(Tasks.deleteFiles(ix,{[selected.key]=selected},root))
+assert(deleted.count==1 and lfs.attributes(path("7",50),"mode")==nil)
+assert(Tasks.page(ix,"files",1,10).count==2)
+local guarded
+for _,item in ipairs(Tasks.page(ix,"files",1,10).rows) do
+    if item.manga=="7" and item.id==99 then guarded=item end
+end
+local kept=assert(Tasks.deleteFiles(ix,{[guarded.key]=guarded},root,guarded.path))
+assert(kept.kept==1 and lfs.attributes(guarded.path,"mode")=="file")
 assert(not Tasks.scan(ix,tmp.."/missing"))
 assert(Tasks.page(ix,"orphan",1,5).count==3)
 require("ffi/util").purgeDir(tmp)
-print("Task pause, attempt ownership, inventory and orphan scan passed")
+print("Task filters, retry, guarded deletion, inventory and orphan scan passed")
