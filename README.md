@@ -1,6 +1,6 @@
 # Suwayomi Kindle Client
 
-面向 Kindle 的独立 KOReader 漫画客户端。通过「工具 → 更多工具 → Suwayomi Kindle」打开，底部有书架、浏览、下载任务和设置四个入口。
+面向 Kindle 的独立 KOReader 漫画客户端。通过「工具 → Suwayomi Kindle」打开，底部有书架、浏览、下载任务和设置四个入口。
 
 ## 连接与使用
 

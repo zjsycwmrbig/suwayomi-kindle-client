@@ -35,7 +35,7 @@ end
 function SuwayomiKindle:addToMainMenu(menu_items)
     menu_items.suwayomi_kindle_client = {
         text = "Suwayomi Kindle",
-        sorting_hint = "more_tools",
+        sorting_hint = "tools",
         callback = function()
             self:openHome()
         end,
