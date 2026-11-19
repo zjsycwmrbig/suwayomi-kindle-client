@@ -85,7 +85,13 @@ end
 
 function Manga:open_local(path)
     self:close()
-    UI:nextTick(function() require("apps/reader/readerui"):showReader(path) end)
+    UI:nextTick(function()
+        local ReaderUI=require("apps/reader/readerui")
+        local current=ReaderUI.instance
+        if current and current.document then
+            if current.document.file~=path then current:switchDocument(path,true) end
+        else ReaderUI:showReader(path) end
+    end)
 end
 
 function Manga:locate_unread(open_file)
@@ -176,7 +182,7 @@ function Manga:add_download_actions(actions)
         return options("ahead",{{0,"关闭"},{1,"1 章"},{3,"3 章"},{5,"5 章"}})
     end}
     actions[#actions+1]={"全部下载",function()
-        confirm("下载本漫画的全部缺失章节？",function() self:queue_chapters("all"); self:refresh() end)
+        confirm("下载《" .. self.detail.title .. "》的全部缺失章节？",function() self:queue_chapters("all"); self:refresh() end)
     end}
     actions[#actions+1]={"删除已读",function()
         confirm("删除本漫画所有已读章节的本地 CBZ？",function() self:clean_chapters(true); self:refresh() end)
@@ -217,14 +223,13 @@ end
 
 function Manga:build_directory(column,width,height)
     local dir = self.directory
-    local limit = math.max(1,math.floor((height-scale(85))/scale(66)))
+    local limit = math.max(1,math.floor((height-scale(12))/scale(66)))
     if dir.anchor then dir.page = math.ceil(dir.anchor/limit); dir.anchor = nil end
     local data,err = Chapters.page(self:local_index(),self.detail.id,dir.page,limit,dir.unread_only)
     if not data then paragraph(column,width,err,16); return end
     dir.page = data.page
-    paragraph(column,width,self.detail.title .. (dir.unread_only and " · 未读" or ""),18,true)
     if data.count == 0 and not self.pending then
-        paragraph(column,width,data.cached and (dir.unread_only and "没有未读章节" or "暂无章节") or "目录尚未缓存，可在菜单中刷新。",16)
+        paragraph(column,width,self.catalog_message or (data.cached and (dir.unread_only and "没有未读章节" or "暂无章节") or "目录尚未缓存，可在菜单中刷新。"),16)
     end
     for _,row in ipairs(data.items) do
         local state = row.read and "已读" or "未读"
@@ -233,10 +238,16 @@ function Manga:build_directory(column,width,height)
         if row.id == dir.target then state = "▶  " .. state end
         local busy=row.state=="queued" or row.state=="active"
         local label=row.path and "阅读" or row.state=="queued" and "排队中"
-            or row.state=="active" and "下载中" or row.state=="failed" and "重试" or "下载"
+            or row.state=="active" and "下载中" or row.state=="failed" and "重试" or row.state=="paused" and "继续" or "下载"
         if row.error and row.state=="failed" then state=state .. " · " .. row.error end
         local function primary()
-            if row.path then self:open_local(row.path)
+            if self.reader_origin then
+                self:close()
+                require("suwayomi_kindle/reader_navigation").select(self.plugin,row,false)
+            elseif row.path then self:open_local(row.path)
+            elseif row.state=="paused" then
+                local q=Queue.attach(self:local_index(),self.settings.connection,self.settings.download,self)
+                Queue.pause(q,false,{manga=self.detail.id,id=row.id})
             elseif not busy then self:queue_chapters("single",row.id); self:refresh() end
         end
         local button_w,more_w=scale(64),scale(42)

@@ -7,9 +7,9 @@ local function target(plugin)
     if config.server_url == "" then return end
     local index = require("suwayomi_kindle/library_index").new(config)
     local row = index:with_db(function(db)
-        local r = db:prepare([[SELECT c.manga,c.id,c.last_page FROM files f JOIN chapter c
-            ON c.manga=f.manga AND c.id=f.id WHERE f.path=?]]):bind(path):step()
-        if r then return {manga=r[1],id=tonumber(r[2]),page=tonumber(r[3])} end
+        local r = db:prepare([[SELECT c.manga,c.id,c.last_page,c.pos,m.title FROM files f JOIN chapter c
+            ON c.manga=f.manga AND c.id=f.id LEFT JOIN manga m ON m.id=c.manga WHERE f.path=?]]):bind(path):step()
+        if r then return {manga=r[1],id=tonumber(r[2]),page=tonumber(r[3]),pos=tonumber(r[4]),title=r[5] or ("漫画 " .. r[1])} end
     end)
     if row then row.index,row.config = index,config end
     return row
@@ -18,6 +18,7 @@ end
 function Reader:onReaderReady()
     local row=target(self)
     self.reading_chapter=row
+    if row then require("suwayomi_kindle/reader_navigation").install(self) end
     if row and row.page then
         self.ui:registerPostReaderReadyCallback(function()
             local page=math.min(row.page+1,self.ui.document:getPageCount())
@@ -26,9 +27,15 @@ function Reader:onReaderReady()
     end
 end
 
+function Reader:onPageUpdate(page)
+    if self.chapter_intent then require("suwayomi_kindle/reader_navigation").pageChanged(self,page) end
+end
+
 function Reader:onCloseDocument()
     local row=self.reading_chapter
     if not row then return end
+    if self.release_chapter_navigation then self.release_chapter_navigation(); self.release_chapter_navigation=nil end
+    if self.home and self.home.alive and self.home.reader_origin==row then require("ui/uimanager"):close(self.home) end
     self.reading_chapter=nil
     local page=self.ui:getCurrentPage()
     local total=self.ui.document:getPageCount()

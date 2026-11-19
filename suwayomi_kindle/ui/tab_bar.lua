@@ -90,11 +90,11 @@ end
 function TabBar:build(options)
     local screen = Screen:getSize()
     local function scale(px) return Screen:scaleBySize(px) end
-    local button_width = math.floor(screen.w / 3)
+    local button_width = math.floor(screen.w / #options.items)
     local button_height = scale(74)
     local buttons = HorizontalGroup:new{}
 
-    for _, item in ipairs(options.items) do
+    for i, item in ipairs(options.items) do
         buttons[#buttons + 1] = TabButton:new{
             tab_id = item.id,
             label = item.label,
@@ -102,7 +102,7 @@ function TabBar:build(options)
             selected = options.active == item.id,
             callback = options.on_select,
             dimen = Geom:new{
-                w = button_width,
+                w = i == #options.items and screen.w - button_width*(i-1) or button_width,
                 h = button_height,
             },
         }

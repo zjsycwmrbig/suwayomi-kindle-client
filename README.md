@@ -1,6 +1,6 @@
 # Suwayomi Kindle Client
 
-面向 Kindle 的独立 KOReader 漫画客户端。通过「工具 → 更多工具 → Suwayomi Kindle」打开，底部有书架、浏览、设置三个入口。
+面向 Kindle 的独立 KOReader 漫画客户端。通过「工具 → 更多工具 → Suwayomi Kindle」打开，底部有书架、浏览、下载任务和设置四个入口。
 
 ## 连接与使用
 
@@ -11,9 +11,13 @@
 
 5. 点漫画进入详情页，可查看封面和简介，底部可加入或移除书架、查看全部章节或继续阅读。「继续阅读」按源的阅读顺序选择首个未读章节，本机已有文件时直接打开 CBZ，否则定位并标出该章。移出书架会保留已有的本地文件。
 6. 目录中点章节名或右侧「阅读／下载」即可打开 CBZ 或排入本地下载队列。点最右侧的箭头，可切换本章已读状态、标记之前为已读或标记之后为未读。范围操作都排除当前章。
-7. 目录左侧菜单可选择「自动下载 → 1／3／5 章」或「全部下载」。自动下载从首个未读章节向后补齐指定数量的未读章节，默认关闭。离开目录后任务继续，重新打开客户端可接续队列，失败章节可单独重试。
+7. 目录左侧菜单可选择「自动下载 → 1／3／5 章」或「全部下载」，全部下载需确认。带二级选项的菜单项排在末尾。自动下载从首个未读章节向后补齐指定数量的未读章节，默认关闭。离开目录后任务继续，重新打开客户端可接续队列，失败章节可单独重试。
 8. 「删除已读」清理本漫画已读的本地文件。「删除策略」默认跟随全局，也可单独选择不删除、直接删除或保留 1／3／5／10 章。保留顺序优先按本机标记已读时间，同一时间按目录倒序。两项漫画偏好只保存在当前账号的本机索引。
 9. 「设置 → 同步」可立即上传本地阅读记录或从服务器拉取书架、目录及进度。关闭 CBZ 时记住页码，停在末页关闭会标为已读。标记和页码先在本地保存，约 20 秒后合并上传。失败项保留供重试；有未上传记录时，手动拉取会先提示覆盖范围。同步日志按时间倒序分页，最多保留 60 条。
+
+10. 「下载任务」显示当前服务器、账号的队列。点一条任务可暂停或继续，左侧菜单可暂停或继续全部、查看已下载文件、清理所有已读下载。暂停会停止当前传输，继续时重新下载未完成的章节。
+11. 「扫描孤立下载」检查下载目录的 CBZ，也检查索引中仍可定位的旧下载位置。结果按文件列出未登记、漫画已移出书架、章节已移出目录等原因。扫描结果可分页查看，文件会保留。
+12. 阅读受管理的 CBZ 时，KOReader 顶部菜单的「目录」会打开整部漫画并定位当前章。末页再向后翻一次，会按漫画目录顺序打开紧邻下一章的第一页。下一章缺失时，启用了自动下载的漫画会下载后续读，其他漫画会先询问。下载等待期间离开文档或翻回其他页，会取消自动跳转。
 
 ## 设置
 
@@ -47,7 +51,9 @@ ln -s /Users/xiyu/code/suwayomi-kindle-client \
 
 ```sh
 cd /Users/xiyu/code/koreader-emulator/KOReader.app/Contents/koreader
-./luajit -e 'require("setupkoenv"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/connection.lua"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/catalog.lua"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/reading.lua")'
+./luajit -e 'require("setupkoenv"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/connection.lua"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/catalog.lua"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/reading.lua"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/tasks.lua")'
 ```
+
+在同一运行目录执行 `python3 /Users/xiyu/code/suwayomi-kindle-client/tests/reader_flow.py` 可使用临时配置和 CBZ 检查原生目录与跨章阅读。
 
 章节目录、下载和阅读同步的完整设计见[功能规格](docs/功能规格.md)。

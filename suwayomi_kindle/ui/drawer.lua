@@ -36,7 +36,13 @@ function Drawer:show_items(items, nested)
     end
     self.nested = nested
     if nested then entry("上一级","chevron_left",function() self:show_items(self.actions) end) end
-    for _,action in ipairs(items) do
+    local ordered={}
+    for _,submenu in ipairs({false,true}) do
+        for _,action in ipairs(items) do
+            if (action.children ~= nil) == submenu then ordered[#ordered+1]=action end
+        end
+    end
+    for _,action in ipairs(ordered) do
         entry(action[1],action.children and "chevron_right" or action.icon,function()
             if action.children then self:show_items(action.children(),true)
             else self:dismiss(); action[2]() end

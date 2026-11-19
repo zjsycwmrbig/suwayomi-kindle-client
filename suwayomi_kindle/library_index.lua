@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 4 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 5 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -52,7 +52,16 @@ local function with_db(index, action)
                     CREATE TABLE finished(manga TEXT,id INTEGER,at INTEGER,PRIMARY KEY(manga,id));
                     CREATE TABLE sync_log(seq INTEGER PRIMARY KEY,at INTEGER,message TEXT);]])
             end
-            db:exec("PRAGMA user_version=4; COMMIT")
+            if version < 5 then
+                db:exec([[ALTER TABLE queue ADD COLUMN ticket INTEGER;
+                    CREATE INDEX queue_display ON queue(
+                        CASE state WHEN 'active' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,priority);
+                    CREATE TABLE queue_control(paused INTEGER, serial INTEGER);
+                    INSERT INTO queue_control VALUES(0,0);
+                    CREATE TABLE orphan(path TEXT PRIMARY KEY,reason TEXT NOT NULL);
+                    CREATE TABLE scan_status(at INTEGER);]])
+            end
+            db:exec("PRAGMA user_version=5; COMMIT")
         end
         return action(db)
     end)

@@ -43,6 +43,7 @@ function Catalog:reset_catalog()
     self.all_sources, self.pinned, self.directory = nil, nil, nil
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
     self.shelf_page, self.index = 1, nil
+    self.task_page,self.task_view,self.task_message=1,"queue",nil
 end
 
 function Catalog:set_saved_connection(saved)
@@ -53,6 +54,7 @@ function Catalog:set_saved_connection(saved)
 end
 
 function Catalog:catalog_back()
+    if self.reader_origin and self.directory then self:close(); return end
     self:close_drawer()
     self:cancel_catalog()
     self.catalog_message = nil
@@ -76,6 +78,7 @@ function Catalog:request_catalog(action, input, done, failed)
         self.pending, self.job = nil, nil
         self.catalog_message = err
         if data then done(data) elseif failed then failed(err) end
+        if err and self.directory then UI:show(require("ui/widget/infomessage"):new{text=err,timeout=3}) end
         if not self.alive then return end
         if self.input_form and self.input_form.capture and self.input_form.focused then
             self.input_form.redraw_on_blur = true
@@ -121,6 +124,7 @@ end
 
 function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
+    if self.selected_tab == "tasks" then return self:task_actions() end
     local source = not self.detail and self.selected_tab == "browse" and self.browse.source
     local pin
     if source then
@@ -363,7 +367,7 @@ function Catalog:build_catalog(screen_width, height)
             or math.max(1,math.floor((height-scale(132))/scale(66)))
     end
     self.catalog_size = size
-    note(column, width, self.pending and "正在从服务器获取数据…" or self.catalog_message)
+    if not self.directory then note(column, width, self.pending and "正在从服务器获取数据…" or self.catalog_message) end
     if self.settings.connection.server_url == "" then
         note(column, width, "先设置 Suwayomi 服务器地址。")
         buttons(self, column, width, {{"前往连接设置", function()

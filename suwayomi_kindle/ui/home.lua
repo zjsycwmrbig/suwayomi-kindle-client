@@ -33,6 +33,7 @@ local Home = InputContainer:extend{
 local TAB_ITEMS = {
     { id = "library", label = "书架", icon = "library" },
     { id = "browse", label = "浏览", icon = "browse" },
+    { id = "tasks", label = "下载任务", icon = "download" },
     { id = "settings", label = "设置", icon = "settings" },
 }
 
@@ -47,6 +48,12 @@ function Home:init()
     self:apply_night_mode(self.settings.theme.mode == "night")
     self.draft = self.settings_store:load("connection")
     self:reset_catalog()
+    if self.reader_origin then
+        local row=self.reader_origin
+        self.settings.connection,self.index=row.config,row.index
+        self.detail={id=row.manga,title=row.title,in_library=true}
+        self.directory={page=1,anchor=row.pos,target=row.id}
+    end
     self.dirty = false
     self.verifying = false
     if Config.trim(self.draft.server_url) == "" then
@@ -99,9 +106,13 @@ function Home:set_tab(tab_id)
         return
     end
     self:cancel_catalog()
-    self.detail, self.directory = nil, nil
+    self.detail, self.directory,self.reader_origin = nil, nil,nil
     self.catalog_message = nil
     self.selected_tab = tab_id
+    if tab_id=="tasks" and self.settings.connection.server_url~="" then
+        local queue=require("suwayomi_kindle/queue")
+        queue.start(queue.attach(self:local_index(),self.settings.connection,self.settings.download,self))
+    end
     if tab_id == "settings" then
         self.settings_route = "index"
     end
@@ -135,8 +146,10 @@ function Home:page_title()
             or self.settings_route == "theme" and "主题"
             or self.settings_route == "browse" and "浏览"
             or "设置"
+    elseif self.selected_tab == "tasks" then
+        return "下载任务"
     elseif self.directory then
-        return "全部章节"
+        return self.directory.unread_only and "未读章节" or "全部章节"
     elseif self.detail then
         return "漫画详情"
     elseif self.selected_tab == "browse" then
@@ -186,7 +199,7 @@ function Home:refresh()
     end
     local header = Header:build{
         width = screen.w,
-        title = self:page_title(),
+        title = self.directory and "" or self:page_title(),
         on_back = on_back,
         on_menu = actions and function() self:open_drawer() end,
         on_close = function()
@@ -220,6 +233,8 @@ function Home:refresh()
         elseif self.settings_route == "browse" then
             body = self:build_browse_settings(screen.w, body_height)
         end
+    elseif self.selected_tab == "tasks" then
+        body = self:build_tasks(screen.w,body_height)
     else
         body = self:build_catalog(screen.w, body_height)
     end
@@ -270,6 +285,8 @@ end
 for name, method in pairs(require("suwayomi_kindle/ui/manga")) do Home[name] = method end
 
 for name, method in pairs(require("suwayomi_kindle/ui/sync")) do Home[name] = method end
+
+for name, method in pairs(require("suwayomi_kindle/ui/tasks")) do Home[name] = method end
 
 for name, method in pairs(Settings.methods) do
     Home[name] = method

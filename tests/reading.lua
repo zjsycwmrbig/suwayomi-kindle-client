@@ -68,8 +68,8 @@ assert(Downloads.finish(index,job,"连接超时"))
 assert(Downloads.enqueue(index,m,"auto"))
 assert(not Downloads.claim(index))
 assert(Downloads.enqueue(index,m,"single",1))
-assert(Downloads.claim(index).id==1)
-assert(Downloads.finish(index,job,nil))
+job=assert(Downloads.claim(index))
+assert(job.id==1 and Downloads.finish(index,job,nil))
 local paths={}
 for id=1,4 do
     local p=Chapters.downloadPath(index,{manga=m,id=id,directory=temp})

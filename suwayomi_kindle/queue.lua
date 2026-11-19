@@ -3,13 +3,14 @@
 local UI = require("ui/uimanager")
 local Worker = require("suwayomi_kindle/worker")
 local Downloads = require("suwayomi_kindle/downloads")
+local Tasks = require("suwayomi_kindle/tasks")
 local Queue = {}
 local sessions = {}
 
 function Queue.attach(index,config,settings,owner)
     local q = sessions[index.path]
     if not q then
-        q = {active=0,index=index}
+        q = {active=0,index=index,jobs={},listeners={}}
         sessions[index.path] = q
         index:with_db(function(db) db:exec("UPDATE queue SET state='queued' WHERE state='active'"); return true end)
     end
@@ -25,8 +26,8 @@ end
 
 local function redraw(q,manga)
     local home=q.owner
-    if home and home.alive and home.index and home.index.path==q.index.path and home.directory
-        and (not manga or home.detail.id==manga) then home:refresh() end
+    if home and home.alive and home.index and home.index.path==q.index.path and (home.selected_tab=="tasks" or (home.directory
+        and (not manga or home.detail.id==manga))) then home:refresh() end
 end
 
 function Queue.start(q,resume)
@@ -39,21 +40,73 @@ function Queue.start(q,resume)
         while not q.waiting and q.active < (tonumber(q.settings.max_parallel) or 1) do
             local job = Downloads.claim(q.index)
             if not job then break end
-            job.directory = q.settings.directory
-            if job.directory == "" then job.directory = require("apps/filemanager/filemanagerutil").getHomeFolder() end
-            if job.directory == "." then job.directory = require("datastorage"):getDataDir() .. "/books" end
+            job.directory = Tasks.directory(q.settings.directory)
             q.active=q.active+1
             started=true
-            Worker.start(UI,q.config,"download",job,function(data,err)
+            q.jobs[job.ticket]=job
+            job.handle=Worker.start(UI,q.config,"download",job,function(data,err)
+                if not q.jobs[job.ticket] then return end
+                q.jobs[job.ticket]=nil
                 q.active=q.active-1
                 Downloads.finish(q.index,job,not data and (err or "下载失败。") or nil)
-                if err and (err:find("连接") or err:find("超时") or err:find("认证")) then q.waiting=true end
+                Queue.notify(q,job,data,err)
+                if err and (err:find("连接") or err:find("超时") or err:find("认证")) then
+                    q.waiting=true
+                    Queue.notifyWaiting(q,err)
+                end
                 redraw(q,job.manga)
                 Queue.start(q)
             end)
         end
         if started then redraw(q) end
     end)
+end
+
+local function key(job) return job.manga .. "/" .. job.id end
+
+function Queue.watch(q,job,callback)
+    local k=key(job)
+    local listeners=q.listeners[k] or {}
+    q.listeners[k]=listeners
+    listeners[callback]=true
+    return function()
+        listeners[callback]=nil
+        if not next(listeners) and q.listeners[k]==listeners then q.listeners[k]=nil end
+    end
+end
+
+function Queue.notify(q,job,data,err)
+    local k=key(job)
+    local listeners=q.listeners[k]
+    q.listeners[k]=nil
+    for callback in pairs(listeners or {}) do callback(data,err) end
+end
+
+function Queue.notifyWaiting(q,message)
+    local listeners=q.listeners
+    q.listeners={}
+    for _,group in pairs(listeners) do
+        for callback in pairs(group) do callback(nil,message) end
+    end
+end
+
+function Queue.pause(q,paused,task)
+    local ok,err=Tasks.setPaused(q.index,paused,task)
+    if not ok then return nil,err end
+    if paused then
+        for ticket,job in pairs(q.jobs) do
+            if not task or key(task)==key(job) then
+                q.jobs[ticket]=nil
+                q.active=q.active-1
+                if job.handle then job.handle:cancel() end
+            end
+        end
+        if task then Queue.notify(q,task,nil,"下载已暂停。")
+        else Queue.notifyWaiting(q,"下载已暂停。") end
+    end
+    redraw(q)
+    Queue.start(q,not paused)
+    return true
 end
 
 -- Re-evaluate only mangas with local files or an enabled download window.

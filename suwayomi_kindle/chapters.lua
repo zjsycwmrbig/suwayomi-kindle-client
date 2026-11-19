@@ -54,7 +54,8 @@ function Chapters.refresh(index, client, id, force, pull_cutoff)
     end)
 end
 
-local columns = [[SELECT c.id,c.pos,c.name,c.scanlator,c.is_read,f.path,q.state,q.error FROM chapter c
+local columns = [[SELECT c.id,c.pos,c.name,c.scanlator,c.is_read,f.path,
+    CASE WHEN q.state='queued' AND (SELECT paused FROM queue_control)=1 THEN 'paused' ELSE q.state END,q.error FROM chapter c
     LEFT JOIN queue q ON c.manga=q.manga AND c.id=q.id
     LEFT JOIN files f ON c.manga=f.manga AND c.id=f.id WHERE c.manga=? ]]
 
@@ -85,6 +86,14 @@ function Chapters.page(index, id, page, limit, unread_only)
             items[#items+1] = chapter(row)
         end
         return {page = page, pages = pages, count = count, cached = dir ~= nil, items = items}
+    end)
+end
+
+function Chapters.locate(index,manga,id,offset)
+    return index:with_db(function(db)
+        local row = db:prepare(columns .. "AND c.pos=(SELECT pos FROM chapter WHERE manga=? AND id=?)+?")
+            :bind(manga,manga,id,offset or 0):step()
+        return row and chapter(row) or false
     end)
 end
 
@@ -176,6 +185,8 @@ function Chapters.download(index, client, input)
         if not db:prepare("SELECT 1 FROM chapter WHERE manga=? AND id=?"):bind(manga,id):step() then
             error("提示：该章节已从目录移除。")
         end
+        if input.ticket and not db:prepare("SELECT 1 FROM queue WHERE manga=? AND id=? AND ticket=? AND state='active'")
+            :bind(manga,id,input.ticket):step() then error("提示：下载任务已暂停。") end
         if not os.rename(tmp,path) then error("提示：无法保存 CBZ，请检查下载目录和剩余空间。") end
         local stat=assert(lfs.attributes(path))
         db:prepare("INSERT OR REPLACE INTO file_stamp VALUES(?,?,?,?,?)")

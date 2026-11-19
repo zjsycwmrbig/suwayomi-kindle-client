@@ -57,6 +57,7 @@ function SuwayomiKindle:onNetworkConnected()
 end
 
 function SuwayomiKindle:openHome()
+    if self.chapter_intent then require("suwayomi_kindle/reader_navigation").cancel(self) end
     if self.home and self.home.alive then
         UIManager:close(self.home)
     end

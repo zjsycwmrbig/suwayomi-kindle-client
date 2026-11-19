@@ -34,7 +34,7 @@ function Downloads.enqueue(index,manga,mode,id)
         elseif mode == "single" then
             select = db:prepare(sql .. " AND c.id=?"):bind(manga,id)
         else select = db:prepare(sql .. " ORDER BY pos"):bind(manga) end
-        local insert = db:prepare([[INSERT INTO queue VALUES(?,?,?,'queued',NULL) ON CONFLICT(manga,id)
+        local insert = db:prepare([[INSERT INTO queue(manga,id,priority,state,error) VALUES(?,?,?,'queued',NULL) ON CONFLICT(manga,id)
             DO UPDATE SET priority=min(queue.priority,excluded.priority),
             state=CASE WHEN queue.state='failed' AND excluded.priority<2 THEN 'queued' ELSE queue.state END]])
         local count=0
@@ -53,11 +53,12 @@ function Downloads.claim(index)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
         local row = db:prepare([[SELECT q.manga,q.id FROM queue q JOIN chapter c ON c.manga=q.manga AND c.id=q.id
-            WHERE q.state='queued' ORDER BY q.priority,q.rowid LIMIT 1]]):step()
+            WHERE q.state='queued' AND (SELECT paused FROM queue_control)=0 ORDER BY q.priority,q.rowid LIMIT 1]]):step()
         local job
         if row then
-            job = {manga=row[1],id=tonumber(row[2])}
-            db:prepare("UPDATE queue SET state='active',error=NULL WHERE manga=? AND id=?"):bind(job.manga,job.id):step()
+            db:exec("UPDATE queue_control SET serial=serial+1")
+            job = {manga=row[1],id=tonumber(row[2]),ticket=tonumber(db:rowexec("SELECT serial FROM queue_control"))}
+            db:prepare("UPDATE queue SET state='active',error=NULL,ticket=? WHERE manga=? AND id=?"):bind(job.ticket,job.manga,job.id):step()
         end
         db:exec("COMMIT")
         return job or false
@@ -67,9 +68,9 @@ end
 function Downloads.finish(index,job,reason)
     return index:with_db(function(db)
         if reason then
-            db:prepare("UPDATE queue SET state='failed',error=? WHERE manga=? AND id=?"):bind(reason,job.manga,job.id):step()
+            db:prepare("UPDATE queue SET state='failed',error=? WHERE manga=? AND id=? AND state='active' AND ticket=?"):bind(reason,job.manga,job.id,job.ticket):step()
         else
-            db:prepare("DELETE FROM queue WHERE manga=? AND id=? AND state='active'"):bind(job.manga,job.id):step()
+            db:prepare("DELETE FROM queue WHERE manga=? AND id=? AND state='active' AND ticket=?"):bind(job.manga,job.id,job.ticket):step()
         end
         return true
     end)
