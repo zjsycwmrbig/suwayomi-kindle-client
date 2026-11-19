@@ -15,7 +15,7 @@ function Tile:init()
     local screen = Device.screen
     local poster_h = screen:scaleBySize(114)
     local poster_w = math.min(self.width - 4, math.floor(poster_h * 0.71))
-    local cover = self.path and Image:new{file = self.path, width = poster_w, height = poster_h}
+    local cover = self.path and Image:new{original_in_nightmode = true, file = self.path, width = poster_w, height = poster_h}
         or Icons.widget("library", screen:scaleBySize(36))
     local body = Column:new{align = "center",
         Frame:new{padding = 0, bordersize = 1,

@@ -336,13 +336,65 @@ function Connection:libraryPage(offset, limit)
     return {rows = rows, total = page.totalCount, more = page.pageInfo.hasNextPage}
 end
 
-function Connection:addManga(id)
-    local data, err = self:request(ADD_MUTATION, {input = {id = tonumber(id), patch = {inLibrary = true}}})
+function Connection:setMembership(id, enabled)
+    local data, err = self:request(ADD_MUTATION, {input = {id = tonumber(id), patch = {inLibrary = enabled}}})
     local manga = data and data.updateManga and data.updateManga.manga
-    if not manga or tostring(manga.id) ~= id or manga.inLibrary ~= true then
-        return nil, err or "服务器没有确认加入书架。"
+    if not manga or tostring(manga.id) ~= id or manga.inLibrary ~= enabled then
+        return nil, err or "服务器没有确认书架变更。"
     end
     return true
+end
+
+function Connection:addManga(id)
+    return self:setMembership(id, true)
+end
+
+function Connection:manga(id)
+    local fields = " id title initialized firstUnreadChapter { id } author description thumbnailUrl unreadCount inLibrary chapters { totalCount } source { displayName } "
+    local data, err = self:request("query($id:Int!){manga(id:$id){" .. fields .. "}}", {id = tonumber(id)})
+    local item = data and data.manga
+    if item and item.initialized == false then
+        data, err = self:request("mutation($id:Int!){fetchManga(input:{id:$id}){manga{" .. fields .. "}}}", {id = tonumber(id)})
+        item = data and data.fetchManga and data.fetchManga.manga
+    end
+    if not item or tostring(item.id) ~= id then return nil, err or "没有找到漫画。" end
+    local rows = manga_rows(setmetatable({item}, {__jsontype = "array"}))
+    if not rows then return nil, "漫画详情响应无效。" end
+    rows[1].first_unread_id = item.firstUnreadChapter and item.firstUnreadChapter.id or false
+    return rows[1]
+end
+
+function Connection:chapterPage(id, offset, limit)
+    local data, err = self:request([[query($id:Int!,$first:Int!,$offset:Int!){
+        chapters(filter:{mangaId:{equalTo:$id}},first:$first,offset:$offset,
+        order:[{by:SOURCE_ORDER,byType:ASC},{by:ID,byType:ASC}]){
+        totalCount pageInfo{hasNextPage} nodes{id name scanlator isRead}}}]],
+        {id = tonumber(id), offset = offset, first = limit})
+    local page = data and data.chapters
+    if not page or not is_array(page.nodes) or type(page.totalCount) ~= "number"
+        or not page.pageInfo then return nil, err or "目录响应无效。" end
+    return page
+end
+
+function Connection:setRead(id, read)
+    local data, err = self:request([[mutation($id:Int!,$read:Boolean!){
+        updateChapter(input:{id:$id,patch:{isRead:$read}}){chapter{id isRead}}}]], {id = id, read = read})
+    local row = data and data.updateChapter and data.updateChapter.chapter
+    if not row or row.id ~= id or row.isRead ~= read then return nil, err or "服务器未确认阅读状态。" end
+    return true
+end
+
+function Connection:pageImage(path)
+    if type(path) ~= "string" then return end
+    local base = self.settings.server_url
+    local url
+    if path:sub(1,1) == "/" and path:sub(2,2) ~= "/" then url = base .. path
+    elseif path:match("^https?://") then url = path
+    elseif path:match("^api/") then url = base .. "/" .. path
+    else return end
+    local headers = url:sub(1,#base+1) == base .. "/" and auth_headers(self.settings, self.session) or {}
+    local r = (self.transport or perform_http_request)(url, nil, headers, 24 * 1024 * 1024)
+    return r.ok and r.body or nil
 end
 
 function Connection:thumbnail(id)

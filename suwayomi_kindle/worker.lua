@@ -2,6 +2,7 @@ local FFI = require("ffi/util")
 local JSON = require("dkjson")
 local Connection = require("suwayomi_kindle/connection")
 local Index = require("suwayomi_kindle/library_index")
+local Chapters = require("suwayomi_kindle/chapters")
 local Worker = {}
 
 function Worker.run(config, action, input)
@@ -21,6 +22,25 @@ function Worker.run(config, action, input)
         if not added then return nil, add_error end
         local saved = Index.new(config):upsert(input)
         return {added = true, warning = not saved and "已加入服务器书架，请重新拉取本地书架。" or nil}
+    elseif action == "detail" then
+        local item, failure = client:manga(input.id)
+        if item then Chapters.saveDescription(Index.new(config),item) end
+        return item, failure
+    elseif action == "membership" then
+        local ok, failure = client:setMembership(input.item.id,input.enabled)
+        if not ok then return nil, failure end
+        local index = Index.new(config)
+        local saved
+        if input.enabled then saved = index:upsert(input.item) else saved = index:remove(input.item.id) end
+        return {enabled = input.enabled, warning = not saved and "服务器已更新，请刷新本地书架。" or nil}
+    elseif action == "chapters" then
+        return Chapters.refresh(Index.new(config),client,input.id,input.force)
+    elseif action == "chapter_read" then
+        local ok, failure = client:setRead(input.id,input.read)
+        if not ok then return nil, failure end
+        return Chapters.setRead(Index.new(config),input.manga,input.id,input.read)
+    elseif action == "download" then
+        return Chapters.download(Index.new(config),client,input)
     elseif action == "covers" then
         return require("suwayomi_kindle/covers").fetch(client, input)
     end
@@ -58,7 +78,7 @@ function Worker.start(ui, config, action, input, callback)
         pid = FFI.runInSubProcess(function() Worker.writeResult(file, config, action, input) end)
     end
     if not pid then file:close(); callback(nil, "无法启动后台任务。"); return end
-    local job = {deadline = os.time() + ((action == "library" or action == "source_seek") and 300 or 60)}
+    local job = {deadline = os.time() + (action == "download" and 1200 or (action == "library" or action == "source_seek" or action == "chapters") and 300 or 60)}
     function job:cancel()
         if self.cancelled or self.finished then return end
         self.cancelled = true
@@ -78,6 +98,10 @@ function Worker.start(ui, config, action, input, callback)
         local data, err
         if not job.cancelled then data, err = Worker.readResult(file) end
         file:close()
+        if action == "download" then
+            local path = Chapters.downloadPath(Index.new(config),input)
+            os.remove(path .. "." .. tonumber(pid) .. ".part")
+        end
         if not job.cancelled then callback(data, err) end
     end
     ui:scheduleIn(0.2, poll)

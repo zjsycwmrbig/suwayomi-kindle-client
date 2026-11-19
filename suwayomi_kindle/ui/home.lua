@@ -40,9 +40,11 @@ function Home:init()
     self.dimen = Screen:getSize()
     self.covers_fullscreen = true
     self.settings = {}
-    for _, section in ipairs({"connection", "download", "library", "browse"}) do
+    for _, section in ipairs({"connection", "download", "library", "browse", "theme"}) do
         self.settings[section] = self.settings_store:load(section)
     end
+    self.previous_night_mode = Screen.night_mode == true
+    self:apply_night_mode(self.settings.theme.mode == "night")
     self.draft = self.settings_store:load("connection")
     self:reset_catalog()
     self.dirty = false
@@ -51,6 +53,14 @@ function Home:init()
         self.selected_tab = "settings"
     end
     self:refresh()
+end
+
+function Home:apply_night_mode(enabled)
+    if (Screen.night_mode == true) ~= enabled then
+        Screen:toggleNightMode()
+        UIManager:ToggleNightMode(enabled)
+        UIManager:setDirty("all", "full")
+    end
 end
 
 function Home:close()
@@ -68,6 +78,7 @@ function Home:onCloseWidget()
     self:close_drawer()
     if self.verification_job then self.verification_job:cancel(); self.verification_job = nil end
     self:cancel_catalog()
+    self:apply_night_mode(self.previous_night_mode)
     self.alive = false
 end
 
@@ -81,7 +92,7 @@ function Home:set_tab(tab_id)
         return
     end
     self:cancel_catalog()
-    self.detail = nil
+    self.detail, self.directory = nil, nil
     self.catalog_message = nil
     self.selected_tab = tab_id
     if tab_id == "settings" then
@@ -113,8 +124,11 @@ function Home:page_title()
             or self.settings_route == "languages" and "源语言"
             or self.settings_route == "download" and "下载"
             or self.settings_route == "library" and "书架"
+            or self.settings_route == "theme" and "主题"
             or self.settings_route == "browse" and "浏览"
             or "设置"
+    elseif self.directory then
+        return "全部章节"
     elseif self.detail then
         return "漫画详情"
     elseif self.selected_tab == "browse" then
@@ -172,10 +186,11 @@ function Home:refresh()
         end,
     }
     local paginated = self.selected_tab == "settings" and self.settings_route == "languages"
-        or self.selected_tab ~= "settings" and not self.detail and self.settings.connection.server_url ~= ""
+        or self.selected_tab ~= "settings" and (not self.detail or self.directory) and self.settings.connection.server_url ~= ""
     self.pagination = nil
+    local footer = self.detail and not self.directory and self:detail_footer(screen.w)
     local body_height = main_height - header:getSize().h
-        - (paginated and Pager.height() or 0)
+        - (footer and footer:getSize().h or 0) - (paginated and Pager.height() or 0)
     local body
     if self.selected_tab == "settings" then
         if self.settings_route == "index" then
@@ -188,6 +203,8 @@ function Home:refresh()
             body = self:build_library_settings(screen.w, body_height)
         elseif self.settings_route == "languages" then
             body = self:build_language_picker(screen.w, body_height)
+        elseif self.settings_route == "theme" then
+            body = self:build_theme_settings(screen.w, body_height)
         elseif self.settings_route == "browse" then
             body = self:build_browse_settings(screen.w, body_height)
         end
@@ -196,6 +213,7 @@ function Home:refresh()
     end
 
     local navigation = VerticalGroup:new{align = "center"}
+    if footer then navigation[#navigation+1] = footer end
     if paginated then
         navigation[#navigation+1] = Pager.build(self, screen.w, self.pagination or {page = 0, total = 0, busy = true})
     end
@@ -236,6 +254,8 @@ end
 for name, method in pairs(require("suwayomi_kindle/ui/catalog")) do
     Home[name] = method
 end
+
+for name, method in pairs(require("suwayomi_kindle/ui/manga")) do Home[name] = method end
 
 for name, method in pairs(Settings.methods) do
     Home[name] = method

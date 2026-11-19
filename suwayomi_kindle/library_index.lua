@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 2 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 3 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -33,7 +33,14 @@ local function with_db(index, action)
                 db:exec([[ALTER TABLE manga ADD COLUMN chapters INTEGER;
                     ALTER TABLE manga ADD COLUMN unread INTEGER; UPDATE shelf SET synced=0]])
             end
-            db:exec("PRAGMA user_version=2; COMMIT")
+            db:exec([[CREATE TABLE IF NOT EXISTS pins(id TEXT PRIMARY KEY);
+                CREATE TABLE IF NOT EXISTS metadata(id TEXT PRIMARY KEY, description TEXT);
+                CREATE TABLE IF NOT EXISTS directories(id TEXT PRIMARY KEY, count INTEGER);
+                CREATE TABLE IF NOT EXISTS chapter(manga TEXT, id INTEGER, pos INTEGER, name TEXT,
+                    scanlator TEXT, is_read INTEGER, PRIMARY KEY(manga,id), UNIQUE(manga,pos));
+                CREATE INDEX IF NOT EXISTS unread_pos ON chapter(manga,is_read,pos);
+                CREATE TABLE IF NOT EXISTS files(manga TEXT,id INTEGER,path TEXT,PRIMARY KEY(manga,id));
+                PRAGMA user_version=3; COMMIT]])
         end
         return action(db)
     end)
@@ -97,6 +104,32 @@ function Index:page(page, limit)
                 thumbnail = r[5], chapters = tonumber(r[6]), unread = tonumber(r[7]), in_library = true}
         end
         return {count = count, synced = synced, page = page, items = items}
+    end)
+end
+
+Index.with_db = with_db
+
+function Index:remove(id)
+    return with_db(self, function(db)
+        db:exec("BEGIN IMMEDIATE")
+        db:prepare("DELETE FROM manga WHERE id=?"):bind(id):step()
+        db:exec("UPDATE shelf SET count=(SELECT count(*) FROM manga); COMMIT")
+        return true
+    end)
+end
+
+function Index:pins()
+    return with_db(self, function(db)
+        local result = {}
+        for row in db:prepare("SELECT id FROM pins"):rows() do result[row[1]] = true end
+        return result
+    end)
+end
+
+function Index:setPinned(id, pinned)
+    return with_db(self, function(db)
+        db:prepare(pinned and "INSERT OR IGNORE INTO pins VALUES(?)" or "DELETE FROM pins WHERE id=?"):bind(id):step()
+        return true
     end)
 end
 

@@ -14,7 +14,7 @@ local Pager = require("suwayomi_kindle/ui/pager")
 local store = require("suwayomi_kindle/settings_store"):new()
 local home = require("suwayomi_kindle/ui/home"):new{settings_store = store}
 home.settings.connection.server_url = "http://example.test"
-home.index = {page = function(_, page, size)
+home.index = {pins = function() return {} end, page = function(_, page, size)
     return {items = {}, count = size + 1, synced = 1, page = page}
 end}
 UI:show(home)
@@ -33,7 +33,7 @@ local function check_footer()
     local nav = home[1][1][2]:contentRange()
     local viewport = home.cropping_widget.dimen
     assert(viewport.y + viewport.h == nav.y)
-    local control = assert(find(home, "text", "<<")).dimen
+    local control = assert(find(home, "icon", "chevron.first")).dimen
     assert(control.y >= nav.y and control.y + control.h <= nav.y + Pager.height())
     assert(find(home, "tab_id", "library").dimen.y == nav.y + Pager.height() + device.screen:scaleBySize(1))
     return nav.y
@@ -80,5 +80,56 @@ home:set_tab("settings")
 home.settings_route = "languages"
 home:refresh()
 assert(check_footer() == y)
+home:set_tab("library")
+home.index = require("suwayomi_kindle/library_index").new(home.settings.connection)
+home.detail = {id="41",title="测试漫画",source="测试源",description="简介内容",chapters=32,in_library=true}
+local chapters = require("suwayomi_kindle/chapters")
+assert(chapters.refresh(home.index,{chapterPage=function()
+    local rows = {}
+    for i=1,32 do rows[i] = {id=i,name="第"..i.."话",isRead=i<24} end
+    return {nodes=rows,totalCount=32,pageInfo={hasNextPage=false}}
+end},"41"))
+home:refresh()
+home:paintTo(device.screen.bb,0,0)
+assert(find(home,"text","简介内容"))
+find(home,"text","继续阅读").callback()
+assert(home.directory.target == 24 and home.pagination.page > 1)
+check_footer()
+assert(find(home,"label","第24话"))
+home:catalog_back()
+find(home,"text","全部章节").callback()
+assert(home.pagination.page == 1 and find(home,"label","第1话"))
+local opened
+home.open_local = function(_,path) opened=path end
+local file = os.tmpname()
+io.open(file,"wb"):close()
+assert(home.index:with_db(function(db)
+    db:prepare("INSERT INTO files VALUES(?,?,?)"):bind("41",24,file):step()
+    return true
+end))
+home:catalog_back()
+find(home,"text","继续阅读").callback()
+assert(opened == file)
+os.remove(file)
+home:set_tab("settings")
+home.settings_route = "theme"
+home:refresh()
+local normal = home.previous_night_mode
+find(home,"text","黑夜").callback()
+assert(device.screen.night_mode and store:load("theme").mode == "night")
+home:set_tab("library")
+assert(check_footer() == y)
+drawer = open()
+assert(device.screen.night_mode)
+drawer:dismiss()
+UI:close(home)
+assert((device.screen.night_mode == true) == normal)
+home = require("suwayomi_kindle/ui/home"):new{settings_store=store}
+assert(device.screen.night_mode and home.settings.theme.mode == "night")
+UI:show(home)
+home.settings_route = "theme"
+home:refresh()
+find(home,"text","白天").callback()
+assert(not device.screen.night_mode and store:load("theme").mode == "day")
 UI:close(home)
 print("Fixed pagination and modal drawer navigation passed")

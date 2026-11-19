@@ -40,7 +40,7 @@ end
 function Catalog:reset_catalog()
     self:cancel_catalog()
     self:reset_browse()
-    self.all_sources = nil
+    self.all_sources, self.pinned, self.directory = nil, nil, nil
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
     self.shelf_page, self.index = 1, nil
 end
@@ -56,7 +56,9 @@ function Catalog:catalog_back()
     self:close_drawer()
     self:cancel_catalog()
     self.catalog_message = nil
-    if self.detail then
+    if self.directory then
+        self.directory = nil
+    elseif self.detail then
         self.detail = nil
     else
         self.browse.source, self.browse.results = nil, nil
@@ -64,7 +66,7 @@ function Catalog:catalog_back()
     self:refresh()
 end
 
-function Catalog:request_catalog(action, input, done)
+function Catalog:request_catalog(action, input, done, failed)
     self:cancel_catalog()
     local generation = self.generation
     self.catalog_message, self.pending = nil, action
@@ -73,7 +75,8 @@ function Catalog:request_catalog(action, input, done)
         if not self.alive or generation ~= self.generation then return end
         self.pending, self.job = nil, nil
         self.catalog_message = err
-        if data then done(data) end
+        if data then done(data) elseif failed then failed(err) end
+        if not self.alive then return end
         if self.input_form and self.input_form.capture and self.input_form.focused then
             self.input_form.redraw_on_blur = true
         else
@@ -112,42 +115,58 @@ local function start_source(home, source)
     local b = home.browse
     b.source, b.results, b.counts, b.ended = source, nil, {}, false
     b.mode, b.page, b.slice, b.search, b.query = "POPULAR", 1, 1, nil, ""
+    home:refresh()
     fetch_page(home, "POPULAR", nil, home.catalog_size, 1, true)
 end
 
 function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
+    local source = not self.detail and self.selected_tab == "browse" and self.browse.source
+    local pin
+    if source then
+        local pinned = self:source_pins()[source.id] == true
+        pin = {icon="library",pinned and "取消置顶" or "置顶此源",function()
+            local ok,err = self:local_index():setPinned(source.id,not pinned)
+            if ok then self.pinned = nil else self.catalog_message = err end
+            self:refresh()
+        end}
+    end
     if self.pending then
         return {{icon = "close", "取消请求", function()
             self:cancel_catalog()
             self.shelf_requested, self.browse.requested = true, true
             self.catalog_message = "请求已取消"
             self:refresh()
-        end}}
+        end},pin}
     end
-    if self.detail then
-        if self.selected_tab == "browse" and not self.detail.in_library then
-            return {{icon = "library", "加入书架", function()
-                local item = self.detail
-                self:request_catalog("add", item, function(data)
-                    item.in_library = true
-                    self.catalog_message = data.warning or "已加入书架"
-                end)
-            end}}
-        end
-        return
+    if self.directory then
+        return {{icon="refresh","刷新章节",function() self:refresh_directory(true) end},
+            {icon="popular",self.directory.unread_only and "显示全部章节" or "只看未读章节",function()
+                self.directory.unread_only = not self.directory.unread_only
+                self.directory.page,self.directory.target = 1,nil
+                self:refresh()
+            end},
+            {icon="latest","定位首个未读",function() self:locate_unread(false); self:refresh() end}}
+    elseif self.detail then
+        return {{icon="refresh","刷新详情",function() self:refresh_detail() end}}
     end
     if self.selected_tab == "library" then
         return {{icon = "refresh", "从服务器刷新", function() refresh_shelf(self) end}}
     end
     local b = self.browse
     if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end}} end
-    local actions = {{icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end},
-        {icon = "popular", "热门", function() fetch_page(self, "POPULAR", nil, self.catalog_size, 1, true) end}}
-    if b.source.latest then
-        actions[#actions+1] = {icon = "latest", "最新", function() fetch_page(self, "LATEST", nil, self.catalog_size, 1, true) end}
-    end
-    return actions
+    return {pin,{icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end}}
+
+end
+
+function Catalog:local_index()
+    self.index = self.index or Index.new(self.settings.connection)
+    return self.index
+end
+
+function Catalog:source_pins()
+    if not self.pinned then self.pinned = self:local_index():pins() or {} end
+    return self.pinned
 end
 
 -- The same inline field searches installed sources or the selected source.
@@ -232,9 +251,7 @@ local function manga_list(home, column, width, items, grid)
     local tiles
     for i, item in ipairs(items) do
         local function open()
-            home:cancel_catalog()
-            home.detail, home.catalog_message = item, nil
-            home:refresh()
+            home:open_detail(item)
         end
         local chapters = item.chapters and (item.chapters .. " 章") or "章节数待刷新"
         if item.unread then chapters = chapters .. " · " .. item.unread .. " 未读" end
@@ -244,7 +261,7 @@ local function manga_list(home, column, width, items, grid)
                 path = Covers.path(home.settings.connection, item), callback = open}
         else
             local path = Covers.path(home.settings.connection, item)
-            local poster = path and Image:new{file = path, width = scale(40), height = scale(56)}
+            local poster = path and Image:new{original_in_nightmode = true, file = path, width = scale(40), height = scale(56)}
                 or Icons.widget("library", scale(28))
             column[#column + 1] = SettingRow:new{label = item.title, value = chapters .. "  " .. (item.author ~= "" and item.author or item.source),
                 leading = poster, width = width, callback = open}
@@ -287,22 +304,31 @@ local function sources(home, column, width, size)
     end
     if not home.all_sources then return end
     local items = {}
+    local pinned, regular = home:source_pins(), {}
     local selected = Languages.set(home.settings.browse.language)
     for _, source in ipairs(home.all_sources) do
         if (selected.all or selected[Languages.base(source.lang)])
-            and (source.name:lower():find(b.filter or "", 1, true)) then items[#items+1] = source end
+            and (source.name:lower():find(b.filter or "", 1, true)) then
+            local group = pinned[source.id] and items or regular
+            group[#group+1] = source
+        end
     end
+    for _,source in ipairs(regular) do items[#items+1] = source end
     if #items == 0 then note(column, width, "没有符合语言和搜索条件的漫画源。"); return end
     local visible, page, pages = slice(items, b.sources_page, size)
     home.pagination = {page = page, total = pages, go = function(n) b.sources_page = n; home:refresh() end}
     for _, source in ipairs(visible) do
-        column[#column+1] = SettingRow:new{width = width, label = source.name, value = source.lang,
+        column[#column+1] = SettingRow:new{width = width, label = source.name, value = (pinned[source.id] and "已置顶 · " or "") .. source.lang,
             callback = function() start_source(home, source) end}
     end
 end
 
 local function source_manga(home, column, width, size, grid)
     local b = home.browse
+    buttons(home,column,width,{
+        {"热门",function() fetch_page(home,"POPULAR",nil,size,1,true) end,b.mode=="POPULAR"},
+        {"最新",b.source.latest and function() fetch_page(home,"LATEST",nil,size,1,true) end or nil,b.mode=="LATEST"},
+    })
     search_bar(home, column, width, true, function(query)
         fetch_page(home, query ~= "" and "SEARCH" or "POPULAR", query ~= "" and query or nil, size, 1, true)
     end)
@@ -319,20 +345,9 @@ local function source_manga(home, column, width, size, grid)
             fetch_page(home, b.mode, b.search, size, n, false)
         end
     end}
-    note(column, width, b.mode == "SEARCH" and ("搜索 · " .. b.search) or (b.mode == "LATEST" and "最新" or "热门"))
+    if b.mode == "SEARCH" then note(column,width,"搜索 · " .. b.search) end
     if #items == 0 then note(column, width, "没有找到漫画。") end
     manga_list(home, column, width, items, grid)
-end
-
-local function detail(home, column, width)
-    local item = home.detail
-    note(column, width, item.title)
-    if item.source and item.source ~= "" then note(column, width, "来源 · " .. item.source) end
-    if item.author and item.author ~= "" then note(column, width, "作者 · " .. item.author) end
-    note(column, width, item.chapters and ("共 " .. item.chapters .. " 章") or "章节数待刷新")
-    if item.unread then note(column, width, "未读 " .. item.unread .. " 章") end
-    if item.in_library then note(column, width, "已在书架") end
-    note(column, width, item.description)
 end
 
 function Catalog:build_catalog(screen_width, height)
@@ -341,6 +356,10 @@ function Catalog:build_catalog(screen_width, height)
     local grid = self.settings[self.selected_tab].view_mode == "grid"
     local size = grid and 3 * math.max(1, math.floor((height - scale(100)) / scale(172)))
         or math.max(1, math.floor((height - scale(100)) / scale(66)))
+    if self.browse.source and self.selected_tab == "browse" and not self.detail then
+        size = grid and 3 * math.max(1,math.floor((height-scale(132))/scale(172)))
+            or math.max(1,math.floor((height-scale(132))/scale(66)))
+    end
     self.catalog_size = size
     note(column, width, self.pending and "正在从服务器获取数据…" or self.catalog_message)
     if self.settings.connection.server_url == "" then
@@ -349,7 +368,10 @@ function Catalog:build_catalog(screen_width, height)
             self:set_tab("settings")
             self:open_connection_settings()
         end}})
-    elseif self.detail then detail(self, column, width)
+    elseif self.directory then self:build_directory(column,width,height)
+    elseif self.detail then
+        self:build_detail(column,width)
+        load_posters(self,{self.detail})
     elseif self.selected_tab == "library" then library(self, column, width, size, grid)
     elseif self.browse.source then source_manga(self, column, width, size, grid)
     else sources(self, column, width, math.max(1, math.floor((height - scale(100)) / scale(66)))) end

@@ -90,6 +90,9 @@ function methods:build_settings_index(screen_width, body_height)
                 callback = function() self.settings_route = "browse"; self:refresh() end,
             },
             rule(width),
+            SettingRow:new{label = "主题", value = self.settings.theme.mode == "night" and "黑夜" or "白天", width = width,
+                callback = function() self.settings_route = "theme"; self:refresh() end},
+            rule(width),
         },
     }
 end
@@ -103,6 +106,7 @@ local function save_section(home, section, patch)
     end
     if section == "browse" and saved.language ~= home.settings.browse.language then home:reset_browse() end
     home.settings[section] = saved
+    if section == "theme" then home:apply_night_mode(saved.mode == "night") end
     home:refresh()
     return true
 end
@@ -116,6 +120,18 @@ end
 local function small(home, text, w, fn, selected)
     return Button.new{text = text, compact = true, width = w, filled = selected, enabled = fn ~= nil,
         show_parent = home, callback = fn}
+end
+
+function methods:build_theme_settings(screen_width, height)
+    local width = screen_width - scale(48)
+    local modes = Row:new{}
+    for _, option in ipairs({{"day","白天"},{"night","黑夜"}}) do
+        modes[#modes+1] = small(self,option[2],scale(62),function()
+            save_section(self,"theme",{mode = option[1]})
+        end,self.settings.theme.mode == option[1])
+    end
+    local content = Column:new{spacing(12), setting_line(width,"显示主题",modes), rule(width)}
+    return self:settings_page_frame(screen_width,height,width,content)
 end
 
 local function view_line(home, section, width)

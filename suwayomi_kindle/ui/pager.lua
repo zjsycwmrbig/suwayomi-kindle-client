@@ -1,4 +1,4 @@
-local Button = require("suwayomi_kindle/ui/flat_button")
+local Button = require("ui/widget/button")
 local Center = require("ui/widget/container/centercontainer")
 local Screen = require("device").screen
 local Geom = require("ui/geometry")
@@ -34,18 +34,26 @@ end
 
 function Pager.build(home, width, model)
     local row = Row:new{}
-    local step = math.min(Screen:scaleBySize(50), math.floor(width / 6))
-    local function control(text, w, enabled, callback)
-        row[#row + 1] = Button.new{text = text, width = w, compact = true, border = 0,
-            enabled = enabled and not model.busy, show_parent = home, callback = callback}
+    local function control(icon, text, enabled, callback)
+        local button = Button:new{icon = icon, text = text, bordersize = 0, padding = Screen:scaleBySize(4),
+            margin = 0, icon_width = Screen:scaleBySize(22), icon_height = Screen:scaleBySize(22),
+            text_font_bold = false, text_font_size = 17, show_parent = home, callback = callback}
+        button:enableDisable(enabled and not model.busy)
+        row[#row+1] = button
+    end
+    local function gap()
+        row[#row+1] = require("ui/widget/horizontalspan"):new{width = math.min(Screen:scaleBySize(30), math.floor(width/20))}
     end
     local ahead = not model.total or model.page < model.total
-    control("<<", step, model.page > 1, function() model.go(1) end)
-    control("<", step, model.page > 1, function() model.go(model.page - 1) end)
-    control(model.page .. "/" .. (model.total or "?"), math.min(width - 4 * step, step * 2),
-        true, function() jump(model) end)
-    control(">", step, ahead, function() model.go(model.page + 1) end)
-    control(">>", step, ahead, function() model.go(model.total or "last") end)
+    control("chevron.first", nil, model.page > 1, function() model.go(1) end)
+    gap()
+    control("chevron.left", nil, model.page > 1, function() model.go(model.page-1) end)
+    gap()
+    control(nil, model.page .. "/" .. (model.total or "?"), model.page > 0, function() jump(model) end)
+    gap()
+    control("chevron.right", nil, ahead, function() model.go(model.page+1) end)
+    gap()
+    control("chevron.last", nil, ahead, function() model.go(model.total or "last") end)
     return Center:new{dimen = Geom:new{w = width, h = Pager.height()}, row}
 end
 return Pager

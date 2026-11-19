@@ -76,6 +76,46 @@ assert(ix:upsert(manga(1204)))
 assert(ix:page(1, 1).count == 1204)
 assert(ix:refresh(function() return {rows = {}, total = 0, more = false} end).count == 0)
 assert(ix:page(2, 5).synced > 0 and ix:page(2, 5).page == 1)
+-- Pinning and cached chapters are scoped to the account and survive a shelf rebuild.
+assert(ix:setPinned("source-a",true) and ix:pins()["source-a"] and not other:pins()["source-a"])
+assert(ix:setPinned("source-a",false) and not ix:pins()["source-a"])
+local Chapters = require("suwayomi_kindle/chapters")
+local api = {chapterPage = function(_,_,offset,limit)
+    local rows = {}
+    for n = offset+1,math.min(205,offset+limit) do
+        rows[#rows+1] = {id=n,name="Chapter "..n,isRead=n~=113}
+    end
+    return {totalCount=205,nodes=rows,pageInfo={hasNextPage=offset+#rows<205}}
+end}
+assert(not Chapters.page(ix,"9",1,5).cached)
+assert(Chapters.refresh(ix,api,"9").count == 205)
+assert(Chapters.nextUnread(ix,"9").pos == 113)
+assert(Chapters.page(ix,"9",12,10).items[3].id == 113)
+assert(Chapters.page(ix,"9",1,10,true).count == 1)
+local original = api.chapterPage
+api.chapterPage = function(self,id,offset,limit)
+    if offset > 0 then return nil,"断开" end
+    return original(self,id,offset,limit)
+end
+assert(not Chapters.refresh(ix,api,"9"))
+assert(Chapters.nextUnread(ix,"9").id == 113)
+assert(Chapters.setRead(ix,"9",113,true).unread == 0 and Chapters.nextUnread(ix,"9") == false)
+assert(Chapters.setRead(ix,"9",113,false).unread == 1)
+api.request = function() return {fetchChapterPages={pages={"/p/1","/p/2"},chapter={id=113,manga={id=9}}}} end
+local png = require("mime").unb64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l2kAAAAASUVORK5CYII=")
+api.pageImage = function() return png end
+local sample = {directory=root,id=113,manga="9"}
+local archive = assert(Chapters.download(ix,api,sample)).path
+assert(Chapters.nextUnread(ix,"9").path == archive)
+api.pageImage = function() return "<html>" end
+assert(not Chapters.download(ix,api,sample))
+assert(ix:remove("9"))
+assert(Chapters.nextUnread(ix,"9").path == archive)
+os.remove(archive)
+assert(not Chapters.nextUnread(ix,"9").path)
+local lfs = require("libs/libkoreader-lfs")
+local dir = archive:match("^(.*)/")
+for _=1,3 do lfs.rmdir(dir); dir = dir:match("^(.*)/") end
 os.remove(ix.path)
 os.remove(other.path)
 require("libs/libkoreader-lfs").rmdir(root)
