@@ -11,7 +11,6 @@ local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
 local HorizontalGroup = require("ui/widget/horizontalgroup")
-local IconWidget = require("ui/widget/iconwidget")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local LineWidget = require("ui/widget/linewidget")
 local TextWidget = require("ui/widget/textwidget")
@@ -20,6 +19,7 @@ local VerticalSpan = require("ui/widget/verticalspan")
 
 local Screen = Device.screen
 local TabBar = {}
+local Icons = require("suwayomi_kindle/ui/icons")
 
 local TabButton = InputContainer:extend{
     tab_id = nil,
@@ -31,11 +31,7 @@ local TabButton = InputContainer:extend{
 
 function TabButton:init()
     local function scale(px) return Screen:scaleBySize(px) end
-    self.icon_widget = IconWidget:new{
-        icon = self.icon,
-        width = scale(25),
-        height = scale(25),
-    }
+    self.icon_widget = Icons.widget(self.icon, scale(25))
     self.label_widget = TextWidget:new{
         text = self.label,
         face = Font:getFace(self.selected and "smallinfofontbold" or "smallinfofont", 16),
@@ -46,14 +42,26 @@ function TabButton:init()
         height = self.dimen.h,
         padding = 0,
         bordersize = 0,
-        background = self.selected and Blitbuffer.COLOR_LIGHT_GRAY or Blitbuffer.COLOR_WHITE,
-        CenterContainer:new{
-            dimen = self.dimen,
-            VerticalGroup:new{
-                align = "center",
-                self.icon_widget,
-                VerticalSpan:new{ width = scale(5) },
-                self.label_widget,
+        background = Blitbuffer.COLOR_WHITE,
+        VerticalGroup:new{
+            LineWidget:new{
+                dimen = Geom:new{
+                    w = self.dimen.w,
+                    h = scale(2),
+                },
+                background = self.selected and Blitbuffer.COLOR_BLACK or Blitbuffer.COLOR_WHITE,
+            },
+            CenterContainer:new{
+                dimen = Geom:new{
+                    w = self.dimen.w,
+                    h = self.dimen.h - scale(2),
+                },
+                VerticalGroup:new{
+                    align = "center",
+                    self.icon_widget,
+                    VerticalSpan:new{ width = scale(5) },
+                    self.label_widget,
+                },
             },
         },
     }
