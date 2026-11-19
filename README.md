@@ -1,34 +1,44 @@
 # Suwayomi Kindle Client
 
-面向 Kindle 的独立 KOReader 漫画客户端。它通过 Suwayomi Server GraphQL API 获取书架、章节、下载和阅读状态。
+面向 Kindle 的独立 KOReader 漫画客户端。通过「工具 → 更多工具 → Suwayomi Kindle」打开，底部有书架、浏览、设置三个入口。
 
-当前版本为 `0.1.0`，包含：
+## 连接与使用
 
-- 书架、浏览、设置三个底部标签。
-- 透明的插件自有 SVG 图标，不依赖带白底的图标缓存。
-- 顶部居中标题、左上返回和扁平列表式「设置 → 连接与验证」二级页面。
-- Suwayomi 地址、认证方式和账号密码配置。
-- 保存配置与真实 GraphQL 连接验证。
-- 独立的 `suwayomi_kindle.lua` 设置文件，不与旧 Suwayomi 插件共享状态。
+1. 在「设置 → 连接」输入 Suwayomi Server 地址，选择无认证、Basic Auth 或账号登录，点击「保存并验证」。
+2. 进入「书架」。首次打开会从服务器拉取漫画，以后优先显示本地索引。点击「从服务器拉取书架」可更新成员和摘要。断网时仍能翻看已保存的书架。
+3. 在「浏览」选择服务器已安装的漫画源，查看热门、最新或搜索结果。支持最新更新的源才会显示「最新」。点击漫画可查看详情并加入服务器书架。
 
-本机开发环境可把仓库直接链接到 KOReader 测试配置的插件目录：
+## 设置
+
+| 入口 | 可选项 |
+| --- | --- |
+| 连接 | 地址、认证方式、账号、验证 |
+| 下载 | 长按选择下载目录，最大并行数 1–3。已读文件可直接删除、保留最近 1／3／5／10 章或不删除，默认不删除 |
+| 书架 | 列表或三列封面书架 |
+| 浏览 | 中文（含简繁）、英文或全部语言，独立的列表或封面布局。默认中文 |
+
+下载和清理策略在此版保存，实际执行随章节下载队列接入。
+
+## 本地存储
+
+每类设置在首次保存时分别写入 KOReader 的 `settings/suwayomi_kindle_<section>.lua`。已有的 `suwayomi_kindle.lua` 连接配置会自动沿用。每个服务器和账号有独立的 SQLite 漫画索引，位于数据目录的 `suwayomi_kindle/library/`。
+
+刷新在后台每批读取 64 部，核对总数、分页结束标志和漫画 ID 唯一性后统一提交。失败时保留上次完整结果。翻页按标题和 ID 从本地按页读取。封面视图只为当前页加载缩略图，缓存位于 `cache/suwayomi_posters/`，使用 256 个有界缓存槽。
+
+## 本机测试
+
+测试配置中的插件目录可链接至仓库：
 
 ```sh
 ln -s /Users/xiyu/code/suwayomi-kindle-client \
   /Users/xiyu/code/koreader-test-profile/plugins/suwayomi-kindle.koplugin
 ```
 
-纯配置测试：
-
-```sh
-luajit tests/run.lua
-```
-
-连接与设置持久化测试需要在 KOReader 自带 LuaJIT 环境中运行：
+在仓库中运行 `luajit tests/run.lua`。连接、SQLite 和后台任务测试使用 KOReader 自带的 LuaJIT：
 
 ```sh
 cd /Users/xiyu/code/koreader-emulator/KOReader.app/Contents/koreader
-./luajit -e 'require("setupkoenv"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/connection.lua")'
+./luajit -e 'require("setupkoenv"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/connection.lua"); dofile("/Users/xiyu/code/suwayomi-kindle-client/tests/catalog.lua")'
 ```
 
-完整产品范围和后续里程碑见[功能规格与验收用例](docs/功能规格.md)。
+后续的章节目录、下载和阅读同步设计见[功能规格](docs/功能规格.md)。

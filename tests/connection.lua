@@ -3,7 +3,7 @@ local plugin_root = assert(test_path:match("^(.*)/tests/connection%.lua$"))
 package.path = plugin_root .. "/?.lua;" .. package.path
 
 local Connection = require("suwayomi_kindle/connection")
-local SettingsStore = require("suwayomi_kindle/settings")
+local SettingsStore = require("suwayomi_kindle/settings_store")
 
 local function equal(actual, expected, message)
     if actual ~= expected then
@@ -63,26 +63,33 @@ local invalid = assert(Connection._verify_payload({
 equal(invalid.ok, false, "classifies authentication failure")
 assert(invalid.error:find("认证", 1, true), "returns a safe authentication message")
 
-local settings_path = os.tmpname()
-os.remove(settings_path)
-local settings_store = SettingsStore:new{file = settings_path}
-local saved = assert(settings_store:save{
-    server_url = "http://suwayomi.test",
-    auth_method = "ui_login",
-    username = "alice",
-    password = "secret",
-})
-assert(not settings_store:is_verified(saved), "new settings are not pre-verified")
-settings_store:mark_verified(saved)
-assert(settings_store:is_verified(saved), "verified settings retain their fingerprint")
-
-local changed = {}
-for key, value in pairs(saved) do
-    changed[key] = value
+local lfs = require("libs/libkoreader-lfs")
+local root = os.tmpname()
+os.remove(root)
+assert(lfs.mkdir(root))
+local settings_store = SettingsStore:new{root = root}
+local old = assert(io.open(root .. "/suwayomi_kindle.lua", "w"))
+old:write([[return {server_url="http://suwayomi.test", auth_method="ui_login", username="alice", password="secret"}]])
+old:close()
+local saved = settings_store:load("connection")
+equal(saved.username, "alice", "reads existing connection")
+assert(not settings_store:is_verified(saved))
+saved = assert(settings_store:mark_verified(saved))
+assert(settings_store:is_verified(saved))
+saved.password = "changed"
+assert(not settings_store:is_verified(saved))
+equal(settings_store:load("download").retention, "never")
+assert(settings_store:update("browse", {language = "en", view_mode = "grid"}))
+assert(settings_store:update("library", {view_mode = "list"}))
+for _, policy in ipairs({"0", "1", "3", "5", "10", "never"}) do
+    assert(settings_store:update("download", {max_parallel = 3, retention = policy, directory = "/tmp/books"}))
+    equal(SettingsStore:new{root = root}:load("download").retention, policy)
 end
-changed.password = "changed"
-assert(not settings_store:is_verified(changed), "password changes invalidate verification")
-os.remove(settings_path)
-os.remove(settings_path .. ".old")
-
-print("connection tests passed")
+equal(settings_store:load("browse").language, "en")
+equal(settings_store:load("connection").password, "secret")
+for _, section in ipairs({"browse", "download", "connection", "library"}) do
+    assert(os.remove(settings_store:path(section)))
+end
+assert(os.remove(root .. "/suwayomi_kindle.lua"))
+assert(lfs.rmdir(root))
+print("connection and separate settings tests passed")

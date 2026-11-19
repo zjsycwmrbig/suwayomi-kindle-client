@@ -8,8 +8,7 @@
 local Dispatcher = require("dispatcher")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
-local Home = require("suwayomi_kindle/ui/home")
-local SettingsStore = require("suwayomi_kindle/settings")
+local SettingsStore = require("suwayomi_kindle/settings_store")
 
 local SuwayomiKindle = WidgetContainer:extend{
     name = "suwayomi_kindle_client",
@@ -47,7 +46,7 @@ function SuwayomiKindle:openHome()
     if self.home and self.home.alive then
         UIManager:close(self.home)
     end
-    self.home = Home:new{
+    self.home = require("suwayomi_kindle/ui/home"):new{
         plugin = self,
         settings_store = self.settings_store,
     }

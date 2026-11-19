@@ -55,18 +55,174 @@ function methods:build_settings_index(screen_width, body_height)
     elseif not self.dirty and self.settings_store:is_verified(self.draft) then
         status = "上次验证成功"
     end
+    local download = self.settings.download
+    local library = self.settings.library
+    local browse = self.settings.browse
+    local browse_lang = ({all = "全部语言", en = "英文", zh = "中文"})[browse.language] or "中文"
     return Frame:new{
         width = screen_width, height = body_height, bordersize = 0, padding = 0,
         padding_left = inset, padding_right = screen_width - width - inset,
         Column:new{
             spacing(12),
             SettingRow:new{
-                label = "连接与验证", value = status, width = width,
-                callback = function() self:open_connection_settings() end,
+                label = "连接", value = status, width = width,
+                callback = function() self.settings_route = "connection"; self:refresh() end,
+            },
+            rule(width),
+            SettingRow:new{
+                label = "下载",
+                value = (download.max_parallel or 1) .. " 并行 · "
+                    .. (download.retention == "never" and "不删除" or download.retention == "0" and "直接删除" or "保留 " .. download.retention .. " 章"),
+                width = width,
+                callback = function() self.settings_route = "download"; self:refresh() end,
+            },
+            rule(width),
+            SettingRow:new{
+                label = "书架",
+                value = library.view_mode == "grid" and "书架视图" or "列表视图",
+                width = width,
+                callback = function() self.settings_route = "library"; self:refresh() end,
+            },
+            rule(width),
+            SettingRow:new{
+                label = "浏览",
+                value = browse_lang .. " · " .. (browse.view_mode == "grid" and "书架视图" or "列表视图"),
+                width = width,
+                callback = function() self.settings_route = "browse"; self:refresh() end,
             },
             rule(width),
         },
     }
+end
+
+local function save_section(home, section, patch)
+    local saved, err = home.settings_store:update(section, patch)
+    if not saved then
+        UI:show(require("ui/widget/infomessage"):new{text = err})
+        home:refresh()
+        return false
+    end
+    if section == "browse" and saved.language ~= home.settings.browse.language then home:reset_browse() end
+    home.settings[section] = saved
+    home:refresh()
+    return true
+end
+
+local function choice_button(home, options, selected, on_select, width)
+    local row = Row:new{}
+    local gap, count = scale(6), #options
+    local button_width = math.floor((width - gap * (count - 1)) / count)
+    for i, option in ipairs(options) do
+        if i > 1 then row[#row + 1] = Gap:new{width = gap} end
+        row[#row + 1] = Button.new{
+            text = option.label,
+            width = button_width,
+            filled = selected == option.value,
+            show_parent = home,
+            callback = function() on_select(option.value) end,
+        }
+    end
+    return row
+end
+
+function methods:build_download_settings(screen_width, body_height)
+    local cfg = self.settings.download
+    local width = math.min(screen_width - scale(48), scale(520))
+    local column = Column:new{align = "left", spacing(18)}
+    column[#column + 1] = SettingRow:new{
+        label = "下载位置", value = cfg.directory == "" and "KOReader 书库" or cfg.directory,
+        width = width, callback = function() self:choose_download_directory() end,
+    }
+    column[#column + 1] = rule(width)
+    column[#column + 1] = spacing(12)
+    column[#column + 1] = label("最大并行下载数")
+    column[#column + 1] = choice_button(self, {
+        {label = "1", value = 1}, {label = "2", value = 2}, {label = "3", value = 3},
+    }, cfg.max_parallel, function(value)
+        save_section(self, "download", {max_parallel = value})
+    end, width)
+    column[#column + 1] = spacing(14)
+    column[#column + 1] = label("标记已读后")
+    local function retention(options)
+        column[#column + 1] = spacing(6)
+        column[#column + 1] = choice_button(self, options, cfg.retention, function(value)
+            save_section(self, "download", {retention = value})
+        end, width)
+    end
+    retention({{label = "不删除", value = "never"}, {label = "直接删除", value = "0"}})
+    retention({{label = "留 1 章", value = "1"}, {label = "留 3 章", value = "3"},
+        {label = "留 5 章", value = "5"}, {label = "留 10 章", value = "10"}})
+    column[#column + 1] = rule(width)
+    column[#column + 1] = Paragraph:new{
+        text = "下载队列接入后，此策略将用于清理已读章节。",
+        width = width, face = Font:getFace("x_smallinfofont", 14),
+    }
+    return self:settings_page_frame(screen_width, body_height, width, column)
+end
+
+function methods:build_library_settings(screen_width, body_height)
+    local cfg = self.settings.library
+    local width = math.min(screen_width - scale(48), scale(520))
+    local column = Column:new{align = "left", spacing(18)}
+    column[#column + 1] = label("漫画显示方式")
+    column[#column + 1] = choice_button(self, {
+        {label = "列表", value = "list"}, {label = "书架", value = "grid"},
+    }, cfg.view_mode, function(value)
+        save_section(self, "library", {view_mode = value})
+    end, width)
+    column[#column + 1] = rule(width)
+    return self:settings_page_frame(screen_width, body_height, width, column)
+end
+
+function methods:build_browse_settings(screen_width, body_height)
+    local cfg = self.settings.browse
+    local width = math.min(screen_width - scale(48), scale(520))
+    local column = Column:new{align = "left", spacing(18)}
+    column[#column + 1] = label("源语言")
+    column[#column + 1] = choice_button(self, {
+        {label = "中文", value = "zh"},
+        {label = "英文", value = "en"},
+        {label = "全部", value = "all"},
+    }, cfg.language, function(value)
+        save_section(self, "browse", {language = value})
+    end, width)
+    column[#column + 1] = rule(width)
+    column[#column + 1] = label("漫画显示方式")
+    column[#column + 1] = choice_button(self, {
+        {label = "列表", value = "list"}, {label = "书架", value = "grid"},
+    }, cfg.view_mode, function(value)
+        save_section(self, "browse", {view_mode = value})
+    end, width)
+    column[#column + 1] = rule(width)
+    return self:settings_page_frame(screen_width, body_height, width, column)
+end
+
+function methods:settings_page_frame(screen_width, body_height, width, content)
+    local inset = math.floor((screen_width - width) / 2)
+    local view = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = body_height},
+        show_parent = self, content}
+    self.cropping_widget = view
+    return Frame:new{
+        width = screen_width, height = body_height, bordersize = 0, padding = 0,
+        padding_left = inset,
+        view,
+    }
+end
+
+function methods:choose_download_directory()
+    local PathChooser = require("ui/widget/pathchooser")
+    local chooser = PathChooser:new{
+        select_directory = true,
+        select_file = false,
+        show_files = false,
+        title = "长按文件夹选择下载位置",
+        path = require("libs/libkoreader-lfs").attributes(self.settings.download.directory, "mode") == "directory"
+            and self.settings.download.directory or require("apps/filemanager/filemanagerutil").getHomeFolder(),
+        onConfirm = function(path)
+            save_section(self, "download", {directory = path})
+        end,
+    }
+    UI:show(chooser)
 end
 
 -- InputText sends focus events to its owning top-level widget.
@@ -128,6 +284,11 @@ end
 function methods:onCloseDialog()
     if self.connection_form and self.connection_form.focused then
         self:finish_field()
+    elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
+        self:catalog_back()
+    elseif self.selected_tab == "settings" and self.settings_route ~= "index" then
+        self.settings_route = "index"
+        self:refresh()
     else
         self:close()
     end
@@ -287,14 +448,15 @@ function methods:save_draft(for_verification)
         self:refresh()
         return
     end
-    local saved, save_error = self.settings_store:save(config)
+    local saved, save_error = self.settings_store:update("connection", config)
     if not saved then
         self.connection_status = save_error or "设置保存失败。"
         self:refresh()
         return
     end
     self:release_connection_form()
-    self.draft = self.settings_store:load()
+    self:set_saved_connection(saved)
+    self.draft = self.settings_store:load("connection")
     self.dirty = false
     if not for_verification then
         self.connection_status = "设置已保存。"
@@ -316,7 +478,14 @@ function methods:verify_connection()
         self.verifying = false
         self.verification_result = result
         self.connection_status = result.ok and "连接验证成功。" or (result.error or "无法完成连接验证。")
-        if result.ok then self.settings_store:mark_verified(config) end
+        if result.ok then
+            local verified = self.settings_store:mark_verified(config)
+            if verified then
+                self.draft.last_verified_credential_hash = verified.last_verified_credential_hash
+            else
+                self.connection_status = "连接成功，验证记录保存失败。"
+            end
+        end
         self:refresh()
     end
 

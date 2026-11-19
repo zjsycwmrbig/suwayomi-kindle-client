@@ -7,6 +7,7 @@ local Blitbuffer = require("ffi/blitbuffer")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local Device = require("device")
 local Font = require("ui/font")
+local LeftContainer = require("ui/widget/container/leftcontainer")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local Geom = require("ui/geometry")
 local GestureRange = require("ui/gesturerange")
@@ -45,12 +46,12 @@ function SettingRow:init()
         max_width = left_width,
         fgcolor = Blitbuffer.COLOR_DARK_GRAY,
     }
-    local left = CenterContainer:new{
+    local left = LeftContainer:new{
         dimen = Geom:new{
             w = left_width,
             h = height,
         },
-        VerticalGroup:new{
+        VerticalGroup:new{align = "left",
             label,
             VerticalSpan:new{ width = scale(4) },
             value,
