@@ -53,7 +53,7 @@ function Catalog:set_saved_connection(saved)
 end
 
 function Catalog:catalog_back()
-    self.menu_open = false
+    self:close_drawer()
     self:cancel_catalog()
     self.catalog_message = nil
     if self.detail then
@@ -118,7 +118,7 @@ end
 function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
     if self.pending then
-        return {{"取消请求", function()
+        return {{icon = "close", "取消请求", function()
             self:cancel_catalog()
             self.shelf_requested, self.browse.requested = true, true
             self.catalog_message = "请求已取消"
@@ -127,7 +127,7 @@ function Catalog:catalog_actions()
     end
     if self.detail then
         if self.selected_tab == "browse" and not self.detail.in_library then
-            return {{"加入书架", function()
+            return {{icon = "library", "加入书架", function()
                 local item = self.detail
                 self:request_catalog("add", item, function(data)
                     item.in_library = true
@@ -138,28 +138,16 @@ function Catalog:catalog_actions()
         return
     end
     if self.selected_tab == "library" then
-        return {{"从服务器刷新", function() refresh_shelf(self) end}}
+        return {{icon = "refresh", "从服务器刷新", function() refresh_shelf(self) end}}
     end
     local b = self.browse
-    if not b.source then return {{"刷新漫画源", function() self:fetch_sources() end}} end
-    local actions = {{"刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end},
-        {"热门", function() fetch_page(self, "POPULAR", nil, self.catalog_size, 1, true) end}}
+    if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end}} end
+    local actions = {{icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end},
+        {icon = "popular", "热门", function() fetch_page(self, "POPULAR", nil, self.catalog_size, 1, true) end}}
     if b.source.latest then
-        actions[#actions+1] = {"最新", function() fetch_page(self, "LATEST", nil, self.catalog_size, 1, true) end}
+        actions[#actions+1] = {icon = "latest", "最新", function() fetch_page(self, "LATEST", nil, self.catalog_size, 1, true) end}
     end
     return actions
-end
-
-function Catalog:build_actions(actions, width)
-    local row = Row:new{Gap:new{width = scale(16)}}
-    for _, action in ipairs(actions) do
-        row[#row+1] = Button.new{text = action[1], compact = true, width = math.min(scale(108), math.floor((width-scale(32))/#actions)),
-            show_parent = self, callback = function()
-                self.menu_open = false
-                action[2]()
-            end}
-    end
-    return row
 end
 
 -- The same inline field searches installed sources or the selected source.
@@ -347,12 +335,12 @@ local function detail(home, column, width)
     note(column, width, item.description)
 end
 
-function Catalog:build_catalog(screen_width, height, available)
+function Catalog:build_catalog(screen_width, height)
     local width = screen_width - scale(48)
     local column = Column:new{align = "left", Space:new{width = scale(12)}}
     local grid = self.settings[self.selected_tab].view_mode == "grid"
-    local size = grid and 3 * math.max(1, math.floor((available - scale(100)) / scale(172)))
-        or math.max(1, math.floor((available - scale(100)) / scale(66)))
+    local size = grid and 3 * math.max(1, math.floor((height - scale(100)) / scale(172)))
+        or math.max(1, math.floor((height - scale(100)) / scale(66)))
     self.catalog_size = size
     note(column, width, self.pending and "正在从服务器获取数据…" or self.catalog_message)
     if self.settings.connection.server_url == "" then
@@ -364,7 +352,7 @@ function Catalog:build_catalog(screen_width, height, available)
     elseif self.detail then detail(self, column, width)
     elseif self.selected_tab == "library" then library(self, column, width, size, grid)
     elseif self.browse.source then source_manga(self, column, width, size, grid)
-    else sources(self, column, width, math.max(1, math.floor((available - scale(100)) / scale(66)))) end
+    else sources(self, column, width, math.max(1, math.floor((height - scale(100)) / scale(66)))) end
     local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = height},
         show_parent = self, column}
     if self.input_form then

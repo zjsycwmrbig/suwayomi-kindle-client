@@ -15,6 +15,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 
 local Config = require("suwayomi_kindle/config")
 local Pager = require("suwayomi_kindle/ui/pager")
+local Drawer = require("suwayomi_kindle/ui/drawer")
 local Header = require("suwayomi_kindle/ui/header")
 local Settings = require("suwayomi_kindle/ui/settings")
 local TabBar = require("suwayomi_kindle/ui/tab_bar")
@@ -64,13 +65,14 @@ function Home:handleEvent(event)
 end
 
 function Home:onCloseWidget()
+    self:close_drawer()
     if self.verification_job then self.verification_job:cancel(); self.verification_job = nil end
     self:cancel_catalog()
     self.alive = false
 end
 
 function Home:set_tab(tab_id)
-    self.menu_open = false
+    self:close_drawer()
     if self.selected_tab == tab_id then
         if tab_id == "settings" and self.settings_route ~= "index" then
             self.settings_route = "index"
@@ -86,6 +88,18 @@ function Home:set_tab(tab_id)
         self.settings_route = "index"
     end
     self:refresh()
+end
+
+function Home:open_drawer()
+    local actions = self:catalog_actions()
+    if self.drawer or not actions then return end
+    self:finish_field()
+    self.drawer = Drawer:new{owner = self, actions = actions}
+    UIManager:show(self.drawer, "ui", self.drawer.dimen)
+end
+
+function Home:close_drawer()
+    if self.drawer then self.drawer:dismiss() end
 end
 
 function Home:open_connection_settings()
@@ -137,23 +151,30 @@ function Home:refresh()
         on_back = function() self:catalog_back() end
     end
     local actions = self:catalog_actions()
+    -- A completed request can replace a cancel action while the drawer is open.
+    if self.drawer then
+        local previous = self.drawer.actions
+        if not actions or #actions ~= #previous then
+            self:close_drawer()
+        else
+            for i, action in ipairs(actions) do
+                if action[1] ~= previous[i][1] then self:close_drawer(); break end
+            end
+        end
+    end
     local header = Header:build{
         width = screen.w,
         title = self:page_title(),
         on_back = on_back,
-        on_menu = actions and function()
-            self.menu_open = not self.menu_open
-            self:refresh()
-        end,
+        on_menu = actions and function() self:open_drawer() end,
         on_close = function()
             self:close()
         end,
     }
-    local menu = self.menu_open and actions and self:build_actions(actions, screen.w)
     local paginated = self.selected_tab == "settings" and self.settings_route == "languages"
         or self.selected_tab ~= "settings" and not self.detail and self.settings.connection.server_url ~= ""
     self.pagination = nil
-    local body_height = main_height - header:getSize().h - (menu and menu:getSize().h or 0)
+    local body_height = main_height - header:getSize().h
         - (paginated and Pager.height() or 0)
     local body
     if self.selected_tab == "settings" then
@@ -171,16 +192,14 @@ function Home:refresh()
             body = self:build_browse_settings(screen.w, body_height)
         end
     else
-        body = self:build_catalog(screen.w, body_height, body_height + (menu and menu:getSize().h or 0))
+        body = self:build_catalog(screen.w, body_height)
     end
 
-    local content = VerticalGroup:new{align = "left"}
+    local navigation = VerticalGroup:new{align = "center"}
     if paginated then
-        content[#content+1] = Pager.build(self, screen.w, self.pagination or {page = 0, total = 0, busy = true})
+        navigation[#navigation+1] = Pager.build(self, screen.w, self.pagination or {page = 0, total = 0, busy = true})
     end
-    content[#content+1] = header
-    if menu then content[#content+1] = menu end
-    content[#content+1] = body
+    navigation[#navigation+1] = tab_bar
 
     local main_frame = FrameContainer:new{
         width = screen.w,
@@ -188,7 +207,7 @@ function Home:refresh()
         padding = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        content,
+        VerticalGroup:new{align = "left", header, body},
     }
     local root = FrameContainer:new{
         width = screen.w,
@@ -201,7 +220,7 @@ function Home:refresh()
             main_frame,
             BottomContainer:new{
                 dimen = screen,
-                tab_bar,
+                navigation,
             },
         },
     }

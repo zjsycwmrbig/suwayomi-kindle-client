@@ -298,9 +298,8 @@ end
 function methods:onCloseDialog()
     if self.input_form and self.input_form.focused then
         self:finish_field()
-    elseif self.menu_open then
-        self.menu_open = false
-        self:refresh()
+    elseif self.drawer then
+        self:close_drawer()
     elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
         self:catalog_back()
     elseif self.selected_tab == "settings" and self.settings_route ~= "index" then
