@@ -9,8 +9,6 @@ local BottomContainer = require("ui/widget/container/bottomcontainer")
 local Device = require("device")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
-local Geom = require("ui/geometry")
-local InfoMessage = require("ui/widget/infomessage")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local TextBoxWidget = require("ui/widget/textboxwidget")
@@ -72,14 +70,15 @@ function Home:close()
     UIManager:close(self)
 end
 
-function Home:onCloseWidget()
-    self.alive = false
+function Home:handleEvent(event)
+    if event.handler == "onCloseWidget" then
+        self:release_connection_form()
+    end
+    return InputContainer.handleEvent(self, event)
 end
 
-function Home:mark_dirty()
-    self.dirty = true
-    self.verification_result = nil
-    self:refresh()
+function Home:onCloseWidget()
+    self.alive = false
 end
 
 function Home:set_tab(tab_id)
@@ -116,6 +115,8 @@ function Home:refresh()
         return
     end
 
+    self:read_connection_fields()
+    self:release_connection_form()
     local screen = Screen:getSize()
     local tab_bar = TabBar:build{
         items = TAB_ITEMS,
@@ -203,13 +204,6 @@ function Home:build_action_button(options)
         callback = options.callback,
         show_parent = self,
     }
-end
-
-function Home:show_notice(text)
-    UIManager:show(InfoMessage:new{
-        text = text,
-        timeout = 3,
-    })
 end
 
 function Home:build_library(body_height)
