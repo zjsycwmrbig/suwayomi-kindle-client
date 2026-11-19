@@ -1,6 +1,5 @@
 -- Settings navigation, inline connection form, and verification feedback.
 local BB = require("ffi/blitbuffer")
-local FFI = require("ffi/util")
 local Device = require("device")
 local Font = require("ui/font")
 local Frame = require("ui/widget/container/framecontainer")
@@ -10,16 +9,15 @@ local Column = require("ui/widget/verticalgroup")
 local Space = require("ui/widget/verticalspan")
 local Gap = require("ui/widget/horizontalspan")
 local Scroll = require("ui/widget/container/scrollablecontainer")
+local Worker = require("suwayomi_kindle/worker")
+local CheckButton = require("ui/widget/checkbutton")
 local InputText = require("ui/widget/inputtext")
 local Text = require("ui/widget/textwidget")
 local Paragraph = require("ui/widget/textboxwidget")
 local Line = require("ui/widget/linewidget")
 local UI = require("ui/uimanager")
-local JSON = require("json")
-local clock = require("socket").gettime
 
 local Config = require("suwayomi_kindle/config")
-local Connection = require("suwayomi_kindle/connection")
 local Button = require("suwayomi_kindle/ui/flat_button")
 local SettingRow = require("suwayomi_kindle/ui/setting_row")
 
@@ -336,6 +334,18 @@ local function add_field(home, column, width, key, title, hint)
     column[#column + 1] = label(title)
     column[#column + 1] = spacing(6)
     column[#column + 1] = input
+    if key == "password" then
+        local toggle
+        toggle = CheckButton:new{
+            text = "显示密码", width = width, parent = home, enabled = not home.verifying,
+            callback = function()
+                input.text_type = toggle.checked and "text" or "password"
+                input:setText(input:getText(), true)
+                UI:setDirty(home, "ui")
+            end,
+        }
+        column[#column + 1] = toggle
+    end
 end
 
 function methods:read_connection_fields()
@@ -489,38 +499,10 @@ function methods:verify_connection()
         self:refresh()
     end
 
-    local pid, fd = FFI.runInSubProcess(function(_, write_fd)
-        local ok, result = pcall(Connection.test, config)
-        local valid = ok and type(result) == "table"
-        -- Only send a small status record, so the child can exit before we read.
-        FFI.writeToFD(write_fd, JSON.encode({
-            ok = valid and result.ok == true,
-            error = valid and result.error or "无法完成连接验证。",
-        }), true)
-    end, true)
-    if not pid then
-        complete({ok = false, error = "无法启动连接验证。"})
-        return
-    end
-    local deadline = clock() + 35
-    local stopped
-    local function poll()
-        if not FFI.isSubProcessDone(pid) then
-            if not stopped and (not self.alive or clock() >= deadline) then
-                stopped = true
-                FFI.terminateSubProcess(pid)
-            end
-            UI:scheduleIn(0.25, poll)
-            return
-        end
-        local ok, result = pcall(JSON.decode, FFI.readAllFromFD(fd))
-        if not stopped and ok and type(result) == "table" then
-            complete(result)
-        else
-            complete({ok = false, error = stopped and "连接超时。" or "无法完成连接验证。"})
-        end
-    end
-    UI:scheduleIn(0.25, poll)
+    self.verification_job = Worker.start(UI, config, "verify", {}, function(result, err)
+        self.verification_job = nil
+        complete(result or {ok = false, error = err})
+    end)
 end
 
 return {methods = methods}

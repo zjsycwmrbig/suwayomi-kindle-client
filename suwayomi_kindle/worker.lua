@@ -5,6 +5,7 @@ local Index = require("suwayomi_kindle/library_index")
 local Worker = {}
 
 function Worker.run(config, action, input)
+    if action == "verify" then return Connection.test(config) end
     local client, err = Connection.open(config)
     if not client then return nil, err end
     if action == "sources" then
@@ -24,22 +25,43 @@ function Worker.run(config, action, input)
     return nil, "未知请求。"
 end
 
--- A shared anonymous temporary file avoids blocking the child on a full pipe.
+function Worker.writeResult(file, config, action, input)
+    local ok, data, err = pcall(Worker.run, config, action, input)
+    if not ok then data, err = nil, "请求未完成。" end
+    file:write(JSON.encode({data = data, error = err}))
+    file:flush()
+end
+
+function Worker.readResult(file)
+    local size = file:seek("end")
+    if size and size > 0 and size <= 1024 * 1024 and file:seek("set", 0) then
+        local ok, envelope, next_pos = pcall(JSON.decode, file:read("*a"))
+        if ok and type(envelope) == "table" and next_pos == size + 1 then
+            if type(envelope.data) == "table" then return envelope.data end
+            if type(envelope.error) == "string" then return nil, envelope.error end
+        end
+    end
+    return nil, "后台任务未返回完整结果，请重试。"
+end
+
 function Worker.start(ui, config, action, input, callback)
     local file = io.tmpfile()
     if not file then callback(nil, "无法创建临时文件。"); return end
-    local pid = FFI.runInSubProcess(function()
-        local ok, data, err = pcall(Worker.run, config, action, input)
-        if not ok then data, err = nil, "请求未完成。" end
-        file:write(JSON.encode({data = data, error = err}))
-        file:flush()
-    end)
+    local pid
+    if jit.os == "OSX" then
+        pid = require("suwayomi_kindle/macos_spawn")(JSON.encode({
+            config = config, action = action, input = input,
+        }), file)
+    else
+        pid = FFI.runInSubProcess(function() Worker.writeResult(file, config, action, input) end)
+    end
     if not pid then file:close(); callback(nil, "无法启动后台任务。"); return end
     local job = {deadline = os.time() + (action == "library" and 300 or 60)}
     function job:cancel()
-        if self.cancelled then return end
+        if self.cancelled or self.finished then return end
         self.cancelled = true
-        FFI.terminateSubProcess(pid)
+        if jit.os == "OSX" then require("ffi").C.kill(pid, 9)
+        else FFI.terminateSubProcess(pid) end
     end
     local function poll()
         if not FFI.isSubProcessDone(pid) then
@@ -50,16 +72,11 @@ function Worker.start(ui, config, action, input, callback)
             ui:scheduleIn(0.2, poll)
             return
         end
-        local result
-        if not job.cancelled and file:seek("end") <= 1024 * 1024 then
-            file:seek("set", 0)
-            result = JSON.decode(file:read("*a"))
-        end
+        job.finished = true
+        local data, err
+        if not job.cancelled then data, err = Worker.readResult(file) end
         file:close()
-        if not job.cancelled then
-            if result then callback(result.data, result.error)
-            else callback(nil, "后台任务未返回完整结果。") end
-        end
+        if not job.cancelled then callback(data, err) end
     end
     ui:scheduleIn(0.2, poll)
     return job

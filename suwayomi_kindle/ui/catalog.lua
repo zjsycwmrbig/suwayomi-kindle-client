@@ -8,6 +8,10 @@ local Row = require("ui/widget/horizontalgroup")
 local Gap = require("ui/widget/horizontalspan")
 local Column = require("ui/widget/verticalgroup")
 local Space = require("ui/widget/verticalspan")
+local Center = require("ui/widget/container/centercontainer")
+local Text = require("ui/widget/textwidget")
+local Image = require("ui/widget/imagewidget")
+local Icons = require("suwayomi_kindle/ui/icons")
 local Paragraph = require("ui/widget/textboxwidget")
 local Button = require("suwayomi_kindle/ui/flat_button")
 local SettingRow = require("suwayomi_kindle/ui/setting_row")
@@ -151,19 +155,19 @@ local function defer(home, task)
 end
 
 local function load_posters(home, items)
-    local ids, missing = {}, {}
+    local ids, missing = {}, false
     for _, item in ipairs(items) do
         ids[#ids + 1] = item.id
-        if not Covers.path(home.settings.connection, item) then missing[#missing + 1] = item end
+        if not Covers.path(home.settings.connection, item) then missing = true end
     end
     local key = table.concat(ids, ",")
     if home.pending or home.poster_key == key then return end
     if home.poster_job then home.poster_job:cancel() end
     home.poster_key, home.poster_job = key, nil
-    if #missing == 0 then return end
+    if not missing then return end
     defer(home, function()
         if home.poster_key ~= key then return end
-        home.poster_job = Worker.start(UI, home.settings.connection, "covers", missing, function(data)
+        home.poster_job = Worker.start(UI, home.settings.connection, "covers", items, function(data)
             if not home.alive or home.poster_key ~= key then return end
             home.poster_job = nil
             if data and data.changed then home:refresh() end
@@ -184,14 +188,17 @@ local function manga_list(home, column, width, items, grid)
             tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title,
                 path = Covers.path(home.settings.connection, item), callback = open}
         else
+            local path = Covers.path(home.settings.connection, item)
+            local poster = path and Image:new{file = path, width = scale(40), height = scale(56)}
+                or Icons.widget("library", scale(28))
             column[#column + 1] = SettingRow:new{label = item.title, value = item.author ~= "" and item.author or item.source,
-                width = width, callback = open}
+                leading = poster, width = width, callback = open}
         end
     end
-    if grid then load_posters(home, items) end
+    load_posters(home, items)
 end
 
-local function library(home, column, width, size, grid)
+local function library(home, column, footer, width, size, grid)
     home.index = home.index or Index.new(home.settings.connection)
     local data, err = home.index:page(home.shelf_page, size)
     buttons(home, column, width, {{home.pending and "正在拉取…" or "从服务器拉取书架",
@@ -207,11 +214,19 @@ local function library(home, column, width, size, grid)
         return
     end
     local pages = math.ceil(data.count / size)
-    note(column, width, data.count .. " 部 · 第 " .. data.page .. " / " .. pages .. " 页")
+    note(column, width, data.count .. " 部漫画")
     manga_list(home, column, width, data.items, grid)
     local function turn(delta) home.shelf_page = home.shelf_page + delta; home:refresh() end
-    pager(home, column, width, data.page > 1 and function() turn(-1) end,
-        data.page < pages and function() turn(1) end)
+    local w = math.floor(width / 3)
+    footer[#footer + 1] = Row:new{
+        Button.new{text = "上一页", width = w, enabled = data.page > 1, show_parent = home,
+            callback = function() if data.page > 1 then turn(-1) end end},
+        Center:new{dimen = Geom:new{w = width - 2 * w, h = scale(38)},
+            Text:new{text = data.page .. " / " .. pages, face = Font:getFace("smallinfofont", 16)}},
+        Button.new{text = "下一页", width = w, enabled = data.page < pages, show_parent = home,
+            callback = function() if data.page < pages then turn(1) end end},
+    }
+    footer[#footer + 1] = Space:new{width = scale(6)}
 end
 
 local function sources(home, column, width, size)
@@ -285,6 +300,7 @@ end
 function Catalog:build_catalog(screen_width, height)
     local width = screen_width - scale(48)
     local column = Column:new{align = "left", Space:new{width = scale(12)}}
+    local footer = Column:new{align = "left"}
     local grid = self.settings[self.selected_tab].view_mode == "grid"
     local size = grid and 3 * math.max(1, math.floor((height - scale(174)) / scale(150)))
         or math.max(1, math.floor((height - scale(174)) / scale(66)))
@@ -295,15 +311,15 @@ function Catalog:build_catalog(screen_width, height)
             self:open_connection_settings()
         end}})
     elseif self.detail then detail(self, column, width)
-    elseif self.selected_tab == "library" then library(self, column, width, size, grid)
+    elseif self.selected_tab == "library" then library(self, column, footer, width, size, grid)
     elseif self.browse.source then source_manga(self, column, width, size, grid)
     else sources(self, column, width, math.max(1, math.floor((height - scale(174)) / scale(66)))) end
     note(column, width, self.catalog_message)
-    local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = height},
+    local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = height - footer:getSize().h},
         show_parent = self, column}
     self.cropping_widget = viewport
     return Frame:new{width = screen_width, height = height, padding = 0, bordersize = 0,
-        padding_left = scale(24), viewport}
+        padding_left = scale(24), Column:new{align = "left", viewport, footer}}
 end
 
 return Catalog

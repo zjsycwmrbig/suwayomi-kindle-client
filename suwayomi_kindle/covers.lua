@@ -1,5 +1,5 @@
--- Direct-mapped thumbnail cache. A slot holds one small rendered poster,
--- so both cache size and eviction work stay bounded as the shelf grows.
+-- Evict stale slot entries, keeping every poster on the current page even
+-- when two visible titles hash to the same slot.
 local Storage = require("datastorage")
 local lfs = require("libs/libkoreader-lfs")
 local sha256 = require("ffi/sha2").sha256
@@ -18,14 +18,16 @@ function Covers.path(config, item)
 end
 
 function Covers.fetch(client, items)
-    local Render = require("ui/renderimage")
+    local render = require("ffi/mupdf").renderImage
+    local visible = {}
+    for _, item in ipairs(items) do visible[location(client.settings, item)] = true end
     local changed = false
     for _, item in ipairs(items) do
         if not Covers.path(client.settings, item) then
             local body = client:thumbnail(item.id)
             if body and #body > 0 then
-                local bitmap = Render:renderImageData(body, #body, false, 144, 204)
-                if bitmap then
+                local rendered, bitmap = pcall(render, body, #body, 144, 204)
+                if rendered and bitmap then
                     local path, dir = location(client.settings, item)
                     require("util").makePath(dir)
                     local tmp = path .. ".tmp"
@@ -34,7 +36,7 @@ function Covers.fetch(client, items)
                     if ok and (lfs.attributes(tmp, "size") or 0) > 0 and os.rename(tmp, path) then
                         changed = true
                         for name in lfs.dir(dir) do
-                            if name:match("^%x+%.png$") and dir .. "/" .. name ~= path then os.remove(dir .. "/" .. name) end
+                            if name:match("^%x+%.png$") and not visible[dir .. "/" .. name] then os.remove(dir .. "/" .. name) end
                         end
                     else
                         os.remove(tmp)

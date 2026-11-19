@@ -34,7 +34,8 @@ function SettingRow:init()
     local height = scale(66)
     local horizontal_padding = scale(18)
     local chevron_size = scale(20)
-    local left_width = self.width - 2 * horizontal_padding - chevron_size - scale(12)
+    local leading_width = self.leading and scale(52) or 0
+    local left_width = self.width - leading_width - 2 * horizontal_padding - chevron_size - scale(12)
     local label = TextWidget:new{
         text = self.label,
         face = Font:getFace("smallinfofontbold", 18),
@@ -68,6 +69,12 @@ function SettingRow:init()
         w = self.width,
         h = height,
     }
+    local row = HorizontalGroup:new{}
+    if self.leading then
+        row[#row + 1] = CenterContainer:new{dimen = Geom:new{w = leading_width, h = height}, self.leading}
+    end
+    row[#row + 1] = left
+    row[#row + 1] = right
     self[1] = FrameContainer:new{
         width = self.width,
         height = height,
@@ -77,10 +84,7 @@ function SettingRow:init()
         padding_bottom = 0,
         bordersize = 0,
         background = Blitbuffer.COLOR_WHITE,
-        HorizontalGroup:new{
-            left,
-            right,
-        },
+        row,
     }
     self.ges_events = {
         TapSettingRow = {

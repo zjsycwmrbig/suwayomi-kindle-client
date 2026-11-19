@@ -70,24 +70,49 @@ os.remove(ix.path)
 os.remove(other.path)
 require("libs/libkoreader-lfs").rmdir(root)
 
--- Exercise the real fork/result transport with more than a pipe buffer.
+-- A native worker may exit mid-write. Its incomplete output must be safe for the UI.
 local Worker = require("suwayomi_kindle/worker")
+for _, bytes in ipairs({"", "   ", "{", "null", "true", "{}", '{"data":{}}junk'}) do
+    local file = assert(io.tmpfile())
+    file:write(bytes)
+    local result, err = Worker.readResult(file)
+    assert(result == nil and type(err) == "string")
+    file:close()
+end
+
+-- Exercise actual network resolution and a result larger than a pipe buffer
+-- in a fresh worker using a loopback fixture instead of inherited Lua mocks.
 local socket = require("socket")
-local original = Worker.run
-Worker.run = function() return {text = string.rep("x", 250000)} end
-local scheduled, completed
+local server = assert(socket.bind("127.0.0.1", 0))
+local _, port = server:getsockname()
+local scheduled, completed, failure
 local ui = {scheduleIn = function(_, _, cb) scheduled = cb end}
-Worker.start(ui, config, "source_page", {}, function(data, err)
-    assert(data, err)
-    completed = #data.text == 250000
-end)
-local deadline = socket.gettime() + 4
-while scheduled and not completed and socket.gettime() < deadline do
+local name = string.rep("x", 120000)
+assert(Worker.start(ui, {server_url = "http://127.0.0.1:" .. port, auth_method = "none"},
+    "sources", {language = "zh"}, function(data, err)
+        failure = err
+        completed = data and data.sources[1].name == name
+    end))
+server:settimeout(5)
+local peer = assert(server:accept())
+peer:settimeout(3)
+local length
+while true do
+    local line = assert(peer:receive("*l"))
+    if line == "" then break end
+    length = tonumber(line:lower():match("^content%-length:%s*(%d+)")) or length
+end
+assert(peer:receive(assert(length)))
+local body = json.encode({data = {sources = {nodes = {{id = "1", name = name, lang = "zh"}}}}})
+assert(peer:send("HTTP/1.1 200 OK\r\nContent-Length: " .. #body .. "\r\nConnection: close\r\n\r\n" .. body))
+peer:close()
+server:close()
+local deadline = socket.gettime() + 5
+while scheduled and not completed and not failure and socket.gettime() < deadline do
     local cb = scheduled
     scheduled = nil
     cb()
     socket.sleep(0.01)
 end
-Worker.run = original
-assert(completed, "large worker result did not arrive")
+assert(completed, failure or "large worker result did not arrive")
 print("catalog API, snapshot, pagination and worker tests passed")

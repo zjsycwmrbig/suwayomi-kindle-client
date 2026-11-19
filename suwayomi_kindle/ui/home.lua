@@ -63,6 +63,7 @@ function Home:handleEvent(event)
 end
 
 function Home:onCloseWidget()
+    if self.verification_job then self.verification_job:cancel(); self.verification_job = nil end
     self:cancel_catalog()
     self.alive = false
 end
