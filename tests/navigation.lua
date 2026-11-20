@@ -190,6 +190,9 @@ end))
 home:catalog_back()
 find(home,"text","继续阅读").callback()
 assert(opened == file)
+opened=nil
+home:open_directory("locate")
+assert(not opened and home.directory.target==24)
 os.remove(file)
 -- Exercise the same ReaderReady/CloseDocument hooks used by KOReader, including
 -- a pending page restored after reopening and completion on the last page.

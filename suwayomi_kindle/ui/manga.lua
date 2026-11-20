@@ -116,10 +116,10 @@ function Manga:refresh_directory(force,continue,has_snapshot)
         self.detail.chapters,self.detail.unread = result.count,result.unread
         self.detail.first_unread_id = nil
         self:queue_chapters("auto")
-        if continue then self:locate_unread(true) end
+        if continue then self:locate_unread(continue ~= "locate") end
     end,function(err)
         if continue and has_snapshot then
-            self:locate_unread(true)
+            self:locate_unread(continue ~= "locate")
             self.catalog_message = (err or "刷新失败。") .. " 已使用本地目录。"
         end
     end)
@@ -138,7 +138,7 @@ function Manga:open_directory(continue)
             or known ~= nil and (next_row and next_row.id or false) ~= known
         if stale then self:refresh_directory(false,continue,true); return end
         self:queue_chapters("auto")
-        if continue then self:locate_unread(true) end
+        if continue then self:locate_unread(continue ~= "locate") end
     end
     self:refresh()
 end

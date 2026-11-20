@@ -68,6 +68,14 @@ function SuwayomiKindle:openHome()
     UIManager:show(self.home)
 end
 
+-- External library entries open the directory even when the next chapter is downloaded.
+function SuwayomiKindle:openLibraryDirectory(item)
+    self:openHome()
+    self.home.detail=item
+    self.home:local_index():markOpened(item.id)
+    self.home:open_directory("locate")
+end
+
 function SuwayomiKindle:onSuwayomiKindleAction()
     self:openHome()
     return true
