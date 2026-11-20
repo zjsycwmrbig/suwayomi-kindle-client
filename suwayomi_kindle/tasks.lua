@@ -167,7 +167,7 @@ end
 function Tasks.deleteFiles(index,selections,root,open_path)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
-        local count,failed,kept=0,0,0
+        local count,failed,kept,missing=0,0,0,0
         local scope=index.path:match("/(%x+)%.sqlite3$")
         for _,item in pairs(selections or {}) do
             local path=item.path
@@ -184,7 +184,11 @@ function Tasks.deleteFiles(index,selections,root,open_path)
                 acceptable=path:sub(-#("/Suwayomi/"..scope.."/"..item.manga.."/"..item.id..".cbz"))
                     =="/Suwayomi/"..scope.."/"..item.manga.."/"..item.id..".cbz"
             elseif acceptable then acceptable=inside(path,root) end
-            local stat=acceptable and lfs.symlinkattributes(path)
+            local stat, errno
+            if acceptable then
+                local message
+                stat,message,errno=lfs.symlinkattributes(path)
+            end
             local stamp
             if stat and item.manga and item.id then
                 stamp=db:prepare("SELECT bytes,mtime,inode FROM file_stamp WHERE manga=? AND id=?")
@@ -192,22 +196,20 @@ function Tasks.deleteFiles(index,selections,root,open_path)
             end
             local replaced=stamp and (tonumber(stamp[1])~=stat.size or tonumber(stamp[2])~=stat.modification
                 or stamp[3]~=tostring(stat.ino))
-            if path==open_path then
+            local absent=acceptable and not stat and errno==2
+            if path and path==open_path then
                 kept=kept+1
-            elseif not acceptable or not stat or stat.mode~="file" or replaced then
-                failed=failed+1
-            elseif os.remove(path) then
+            elseif absent or (acceptable and stat and stat.mode=="file" and not replaced and os.remove(path)) then
                 if item.manga and item.id then
                     db:prepare("DELETE FROM files WHERE manga=? AND id=? AND path=?"):bind(item.manga,item.id,path):step()
                     db:prepare("DELETE FROM file_stamp WHERE manga=? AND id=?"):bind(item.manga,item.id):step()
-                else
-                    db:prepare("DELETE FROM orphan WHERE path=?"):bind(path):step()
                 end
-                count=count+1
+                db:prepare("DELETE FROM orphan WHERE path=?"):bind(path):step()
+                if absent then missing=missing+1 else count=count+1 end
             else failed=failed+1 end
         end
         db:exec("COMMIT")
-        return {count=count,failed=failed,kept=kept}
+        return {count=count,failed=failed,kept=kept,missing=missing}
     end)
 end
 

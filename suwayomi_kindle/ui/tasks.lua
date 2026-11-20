@@ -117,7 +117,7 @@ local function delete_selected(home,items)
     UI:show(require("ui/widget/confirmbox"):new{
         text=string.format("删除所选 %d 个本地章节文件？阅读记录会保留。",#selected),
         ok_callback=function()
-            local count,failed,kept,at=0,0,0,1
+            local count,failed,kept,missing,at=0,0,0,0,1
             local function step()
                 local batch={}
                 for i=at,math.min(#selected,at+31) do batch[#batch+1]=selected[i] end
@@ -126,9 +126,12 @@ local function delete_selected(home,items)
                 local result,why=Tasks.deleteFiles(index,batch,root,path)
                 if not result then notice(why); return end
                 count,failed,kept=count+result.count,failed+result.failed,kept+result.kept
+                missing=missing+(result.missing or 0)
                 at=at+#batch
                 if at<=#selected then UI:nextTick(step); return end
-                notice(string.format("已删除 %d 个文件，失败 %d 个，占用中 %d 个",count,failed,kept))
+                local summary=string.format("已删除 %d 个文件，失败 %d 个，占用中 %d 个",count,failed,kept)
+                if missing>0 then summary=summary .. string.format("，清理失效记录 %d 条",missing) end
+                notice(summary)
                 if home.alive and home.index==index then
                     clear_selection(home)
                     home:refresh()
