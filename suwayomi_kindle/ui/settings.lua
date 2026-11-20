@@ -171,7 +171,7 @@ function methods:build_download_settings(screen_width, body_height)
     local cfg = self.settings.download
     local width = math.min(screen_width - scale(48), scale(520))
     local column = Column:new{align = "left", spacing(10),
-        SettingRow:new{label = "下载位置", value = cfg.directory == "" and "KOReader 书库" or cfg.directory,
+        SettingRow:new{label = "下载位置", value = cfg.directory == "" and "插件目录 / downloads" or cfg.directory,
             width = width, callback = function() self:choose_download_directory() end},
         rule(width),
         stepper(self, width, "并行下载", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"}}, cfg.max_parallel,
@@ -240,15 +240,18 @@ end
 
 function methods:choose_download_directory()
     local PathChooser = require("ui/widget/pathchooser")
+    local lfs = require("libs/libkoreader-lfs")
+    local Tasks = require("suwayomi_kindle/tasks")
+    local path = Tasks.directory(self.settings.download.directory)
+    local default = Tasks.directory()
     local chooser = PathChooser:new{
         select_directory = true,
         select_file = false,
         show_files = false,
         title = "长按文件夹选择下载位置",
-        path = require("libs/libkoreader-lfs").attributes(self.settings.download.directory, "mode") == "directory"
-            and self.settings.download.directory or require("apps/filemanager/filemanagerutil").getHomeFolder(),
+        path = lfs.attributes(path, "mode") == "directory" and path or default:match("^(.*)/"),
         onConfirm = function(path)
-            save_section(self, "download", {directory = path})
+            save_section(self, "download", {directory = path == default and "" or path})
         end,
     }
     UI:show(chooser)

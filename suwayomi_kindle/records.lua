@@ -98,27 +98,32 @@ function Records.push(index,client,cutoff)
     return {message=string.format("上传结束 · 成功 %d 项，失败 %d 项",sent,failed)}
 end
 
-function Records.pull(index,client,cutoff)
+-- Freeze the worklist before network I/O. Reading this connection's temporary
+-- table does not hold a read transaction on the main chapter database.
+local relevant = [[ WHERE opened IS NOT NULL OR id IN (
+    SELECT id FROM directories UNION SELECT manga FROM pending UNION SELECT manga FROM files
+    UNION SELECT manga FROM queue UNION SELECT manga FROM policy WHERE ahead>0)]]
+
+function Records.pull(index,client,cutoff,all_chapters)
     local shelf,err = index:refresh(function(offset,limit) return client:libraryPage(offset,limit) end)
     if not shelf then return nil,"书架拉取失败 · " .. err end
-    local mangas,db_error = index:with_db(function(db)
-        local items = {}
-        for r in db:prepare("SELECT id,title FROM manga ORDER BY id"):rows() do items[#items+1]={id=r[1],title=r[2]} end
-        return items
-    end)
-    if not mangas then return nil,db_error end
-    local count, failed = 0, 0
-    for _,m in ipairs(mangas) do
-        local result,reason = require("suwayomi_kindle/chapters").refresh(index,client,m.id,false,cutoff)
-        if result then count=count+1 else
-            failed=failed+1
-            Records.log(index,"目录拉取失败 · " .. m.title .. " · " .. reason)
-            if reason:find("连接") or reason:find("认证") or reason:find("超时") then
-                return nil,"书架已拉取，已更新 " .. count .. " 部目录。" .. reason
+    local chapters=require("suwayomi_kindle/chapters")
+    return index:with_db(function(db)
+        db:exec("CREATE TEMP TABLE targets AS SELECT id,title FROM manga" .. (all_chapters and "" or relevant))
+        local count,failed=0,0
+        for m in db:prepare("SELECT id,title FROM targets ORDER BY id"):rows() do
+            local result,reason=chapters.refresh(index,client,m[1],false,cutoff)
+            if result then count=count+1 else
+                failed=failed+1
+                Records.log(index,"目录拉取失败 · " .. m[2] .. " · " .. reason)
+                if reason:find("连接") or reason:find("认证") or reason:find("超时") then
+                    error("提示：书架已拉取，已更新 " .. count .. " 部目录。" .. reason)
+                end
             end
         end
-    end
-    return {message=string.format("拉取结束 · 书架 %d 部，目录成功 %d 部，失败 %d 部",shelf.count,count,failed)}
+        return {message=string.format("书架 %d 部 · 目录成功 %d 部，失败 %d 部，跳过 %d 部",
+            shelf.count,count,failed,math.max(0,shelf.count-count-failed))}
+    end)
 end
 
 return Records

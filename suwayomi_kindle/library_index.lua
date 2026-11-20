@@ -91,8 +91,9 @@ end
 function Index:refresh(fetch, limit)
     limit = limit or 64
     return with_db(self, function(db)
-        db:exec("CREATE TEMP TABLE incoming AS SELECT * FROM manga LIMIT 0")
-        local stmt = db:prepare("INSERT INTO incoming VALUES(?,?,?,?,?,?,?,?,NULL)")
+        db:exec([[CREATE TEMP TABLE incoming(id TEXT PRIMARY KEY,title TEXT NOT NULL,author TEXT,
+            source TEXT,thumbnail TEXT,chapters INTEGER,unread INTEGER,added INTEGER) WITHOUT ROWID]])
+        local stmt = db:prepare("INSERT INTO incoming VALUES(?,?,?,?,?,?,?,?)")
         local offset, total = 0, nil
         repeat
             local page, err = fetch(offset, limit)
@@ -104,14 +105,24 @@ function Index:refresh(fetch, limit)
                 error("提示：书架分页不一致，请重新拉取。")
             end
             total = page.total
+            db:exec("BEGIN")
             for _, item in ipairs(page.rows) do insert(stmt, item) end
+            db:exec("COMMIT")
             offset = next_offset
         until offset == total
+        -- Resolve pending reads against the current local directory under the same
+        -- write lock as publication. No shelf row is replaced just to preserve opened.
         db:exec([[BEGIN IMMEDIATE;
-            UPDATE incoming SET opened=(SELECT opened FROM manga WHERE manga.id=incoming.id);
-            DELETE FROM manga; INSERT INTO manga SELECT * FROM incoming]])
-        db:exec([[UPDATE manga SET unread=(SELECT count(*) FROM chapter c WHERE c.manga=manga.id AND is_read=0)
-            WHERE id IN (SELECT DISTINCT manga FROM pending) AND id IN (SELECT id FROM directories)]])
+            UPDATE incoming SET unread=(SELECT count(*) FROM chapter c WHERE c.manga=incoming.id AND is_read=0)
+                WHERE id IN (SELECT manga FROM pending) AND id IN (SELECT id FROM directories);
+            DELETE FROM manga WHERE id NOT IN (SELECT id FROM incoming);
+            INSERT INTO manga(id,title,author,source,thumbnail,chapters,unread,added)
+                SELECT * FROM incoming WHERE true
+                ON CONFLICT(id) DO UPDATE SET
+                    (title,author,source,thumbnail,chapters,unread,added)=
+                    (excluded.title,excluded.author,excluded.source,excluded.thumbnail,excluded.chapters,excluded.unread,excluded.added)
+                WHERE (title,author,source,thumbnail,chapters,unread,added) IS NOT
+                    (excluded.title,excluded.author,excluded.source,excluded.thumbnail,excluded.chapters,excluded.unread,excluded.added)]])
         db:prepare("UPDATE shelf SET count=?, synced=?"):bind(total, os.time()):step()
         db:exec("COMMIT")
         return {count = total}
@@ -152,6 +163,7 @@ function Index:page(page, limit, sort, search)
             where=" WHERE instr(lower(title),lower(?))>0 OR instr(lower(author),lower(?))>0"
             args={search,search}
             count=tonumber(db:prepare("SELECT count(*) FROM manga" .. where):bind(unpack(args)):step()[1])
+            if count==0 then return {count=0,synced=synced,page=1,items={}} end
         end
         page = math.max(1, math.min(page, math.ceil(count / limit)))
         args[#args+1],args[#args+2]=limit,(page-1)*limit

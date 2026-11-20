@@ -87,6 +87,7 @@ home.settings.library.view_mode="grid"
 home:refresh()
 home:paintTo(device.screen.bb,0,0)
 local tile=assert(find(home,"title","封面测试"))
+assert(find(tile,"text","57%") and find(tile,"percentage",4/7))
 assert(tile.poster_height>device.screen:scaleBySize(114))
 local function hold(widget)
     home:paintTo(device.screen.bb,0,0)
@@ -103,7 +104,11 @@ assert(continued==1)
 home.detail=nil
 home.settings.library.view_mode="list"
 home:refresh()
-assert(find(home,"text","7 章 · 3 未读 · 0 已下载"))
+assert(find(home,"text","7 章 · 0 已下载") and find(home,"text","57%"))
+local progress=require("suwayomi_kindle/ui/reading_progress")
+for _,v in ipairs({{7,7,"0%"},{7,0,"100%"},{1000,1,"99%"},{0,0,"—"},{7,nil,"—"}}) do
+    assert(find(progress.new(v[1],v[2]),"text",v[3]))
+end
 assert(find(home,"text","作者 · 来源"))
 hold(find(home,"label","封面测试"))
 assert(continued==2)
@@ -273,6 +278,10 @@ home.settings_route="sync"
 home:refresh()
 home:paintTo(device.screen.bb,0,0)
 assert(find(home,"label","同步本地记录") and find(home,"label","从服务器同步"))
+find(home,"label","同步全部章节").callback()
+local full=UI:getTopmostVisibleWidget()
+assert(full.text:find("整个书架",1,true))
+full:onClose()
 home.settings_route = "theme"
 home:refresh()
 local normal = home.previous_night_mode

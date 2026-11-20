@@ -1,12 +1,17 @@
 local lfs = require("libs/libkoreader-lfs")
 local Tasks = {}
 local filters = {all=true,active=true,queued=true,paused=true,failed=true}
+local module_file = debug.getinfo(1,"S").source:sub(2)
+local plugin_root = module_file:match("^(.*)/suwayomi_kindle/tasks%.lua$") or "."
+if plugin_root:sub(1,1) ~= "/" then
+    local relative = plugin_root:gsub("^%./", "")
+    plugin_root = lfs.currentdir() .. (relative == "." and "" or "/" .. relative)
+end
 
 function Tasks.directory(configured)
-    local path = configured
-    if path == "" then path = require("apps/filemanager/filemanagerutil").getHomeFolder() end
-    if path == "." then path = require("datastorage"):getDataDir() .. "/books" end
-    return path
+    if not configured or configured == "" then return plugin_root .. "/downloads" end
+    if configured == "." then return require("datastorage"):getDataDir() .. "/books" end
+    return configured
 end
 
 local queries = {
@@ -212,7 +217,9 @@ function Tasks.scan(index,root)
     return index:with_db(function(db)
         db:exec("CREATE TEMP TABLE disk(path TEXT PRIMARY KEY)")
         local add = db:prepare("INSERT OR IGNORE INTO disk VALUES(?)")
-        local pending,seen = {root},{}
+        local pending,seen = {},{}
+        -- A fresh install has no default download directory until the first write.
+        if root~=Tasks.directory() or lfs.symlinkattributes(root) then pending[1]=root end
         local scope = assert(index.path:match("/(%x+)%.sqlite3$"))
         local marker = "/Suwayomi/" .. scope .. "/"
         for row in db:prepare("SELECT path FROM files"):rows() do

@@ -8,6 +8,11 @@ local lfs=require("libs/libkoreader-lfs")
 local tmp=os.tmpname()
 os.remove(tmp)
 local ix=Index.new({server_url="http://example.test",auth_method="none"},tmp)
+assert(Tasks.directory("")==repo.."/downloads" and Tasks.directory()==Tasks.directory(""))
+assert(Tasks.directory(tmp)==tmp)
+if not lfs.symlinkattributes(Tasks.directory()) then
+    assert(Tasks.scan(ix,Tasks.directory()).count==0)
+end
 local function track(manga,id,path)
     require("util").makePath(path:match("^(.*)/"))
     local file=assert(io.open(path,"wb")); file:write("fixture"); file:close()

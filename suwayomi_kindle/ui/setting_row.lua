@@ -35,7 +35,8 @@ function SettingRow:init()
     local horizontal_padding = scale(self.inset or 18)
     local chevron_size = scale(20)
     local leading_width = self.leading and scale(self.leading_width or 52) or 0
-    local left_width = self.width - leading_width - 2 * horizontal_padding
+    local trailing_width = self.trailing and self.trailing:getSize().w + scale(8) or 0
+    local left_width = self.width - trailing_width - leading_width - 2 * horizontal_padding
         - ((self.single_line or self.hide_chevron) and 0 or chevron_size + scale(12))
     local label = TextWidget:new{
         text = self.label,
@@ -64,6 +65,9 @@ function SettingRow:init()
         row[#row + 1] = CenterContainer:new{dimen = Geom:new{w = leading_width, h = height}, self.leading}
     end
     row[#row + 1] = left
+    if self.trailing then
+        row[#row+1]=CenterContainer:new{dimen=Geom:new{w=trailing_width,h=height},self.trailing}
+    end
     if not self.single_line and not self.hide_chevron then
         row[#row + 1] = CenterContainer:new{dimen = Geom:new{w = chevron_size + scale(12), h = height},
             Icons.widget(self.chevron, chevron_size)}

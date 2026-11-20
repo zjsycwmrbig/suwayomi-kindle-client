@@ -45,6 +45,18 @@ truthy(err:find("用户名", 1, true), "explains missing username")
 
 print("config tests passed")
 
+local Progress = require("suwayomi_kindle/progress")
+local fraction, percent = Progress.measure(7, 3)
+equal(fraction, 4/7)
+equal(percent, 57)
+equal(select(2, Progress.measure(7, 7)), 0)
+equal(select(2, Progress.measure(7, 0)), 100)
+equal(select(2, Progress.measure(1000, 1)), 99)
+equal((Progress.measure(0, 0)), nil)
+equal((Progress.measure(7)), nil)
+equal((Progress.measure(7, 8)), nil)
+print("reading progress calculation passed")
+
 local Languages = require("suwayomi_kindle/languages")
 local options = Languages.options("zh", {{lang="fil-PH"}})
 assert(options[#options] == "fil")

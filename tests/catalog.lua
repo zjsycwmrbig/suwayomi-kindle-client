@@ -57,7 +57,13 @@ assert(ix:refresh(page).count == 1203)
 assert(ix:page(1,3,"added").items[1].id=="1203")
 assert(ix:page(1,3,"chapters").items[1].id=="1203")
 assert(ix:markOpened("17"))
+assert(ix:with_db(function(db)
+    db:prepare([[CREATE TRIGGER unchanged_shelf BEFORE UPDATE ON manga BEGIN
+        SELECT RAISE(ABORT,'unchanged shelf rows must not be rewritten'); END]]):step()
+    return true
+end))
 assert(ix:refresh(page))
+assert(ix:with_db(function(db) db:exec("DROP TRIGGER unchanged_shelf"); return true end))
 assert(ix:page(1,3,"opened").items[1].id=="17")
 assert(ix:page(1,5,"added","bOOk 0001").count==10)
 assert(ix:page(2,5,"added","bOOk 0001").items[1].id=="14")

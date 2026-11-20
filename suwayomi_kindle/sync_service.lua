@@ -23,15 +23,15 @@ local function refresh(state,index)
         and home.selected_tab=="settings" then home:refresh() end
 end
 
-function Service.run(index,config,action,cutoff)
+function Service.run(index,config,action,cutoff,all_chapters)
     local state=Service.session(index)
     if state.busy then return end
     if state.timer then UI:unschedule(state.timer); state.timer=nil end
-    local label=action=="push" and "上传" or "拉取"
+    local label=action=="push" and "上传" or (all_chapters and "全库拉取" or "拉取")
     state.busy=label
     Records.log(index,"开始" .. label)
     refresh(state,index)
-    Worker.start(UI,config,"sync_" .. action,{cutoff=cutoff},function(result,err)
+    Worker.start(UI,config,"sync_" .. action,{cutoff=cutoff,all_chapters=all_chapters},function(result,err)
         state.busy=nil
         Records.log(index,result and result.message or label .. "失败 · " .. (err or "后台任务中断。"))
         if action=="pull" and result then

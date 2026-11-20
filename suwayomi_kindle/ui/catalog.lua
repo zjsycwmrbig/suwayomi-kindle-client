@@ -16,6 +16,7 @@ local Icons = require("suwayomi_kindle/ui/icons")
 local Paragraph = require("ui/widget/textboxwidget")
 local Button = require("suwayomi_kindle/ui/flat_button")
 local SettingRow = require("suwayomi_kindle/ui/setting_row")
+local Progress = require("suwayomi_kindle/ui/reading_progress")
 local Tile = require("suwayomi_kindle/ui/manga_tile")
 local Worker = require("suwayomi_kindle/worker")
 local Index = require("suwayomi_kindle/library_index")
@@ -291,14 +292,15 @@ local function manga_list(home, column, width, items, grid)
             home:open_directory(true)
         end or nil
         local chapters = item.chapters and (item.chapters .. " 章") or "章节数待刷新"
-        if item.unread then chapters = chapters .. " · " .. item.unread .. " 未读" end
+        local shelf = home.selected_tab == "library"
+        local progress = shelf and Progress.new(item.chapters,item.unread,grid) or nil
+        if not shelf and item.unread then chapters = chapters .. " · " .. item.unread .. " 未读" end
         if grid then
             if i % 3 == 1 then tiles = Row:new{}; column[#column + 1] = tiles end
-            tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = chapters,
+            tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = chapters, progress=progress,
                 poster_height = home.shelf_poster_height, path = Covers.path(home.settings.connection, item), callback = open, hold_callback = continue}
         else
             local path = Covers.path(home.settings.connection, item)
-            local shelf = home.selected_tab == "library"
             local poster = path and Image:new{original_in_nightmode = true, file = path,
                 width = scale(shelf and 46 or 40), height = scale(shelf and 65 or 56)}
                 or Icons.widget("library", scale(28))
@@ -309,7 +311,7 @@ local function manga_list(home, column, width, items, grid)
             if shelf then chapters = chapters .. " · " .. (item.downloaded or 0) .. " 已下载" end
             column[#column + 1] = SettingRow:new{label = item.title, value = chapters,
                 detail_line = #credits > 0 and table.concat(credits," · ") or nil,
-                leading = poster, width = width, inset=4, leading_width=56, callback = open, hold_callback=continue,
+                leading = poster, trailing=progress, hide_chevron=shelf, width = width, inset=4, leading_width=56, callback = open, hold_callback=continue,
                 row_height=shelf and 72 or 66}
         end
     end

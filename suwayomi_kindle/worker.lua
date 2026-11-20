@@ -13,7 +13,7 @@ function Worker.run(config, action, input)
     if action == "sync_push" then
         return require("suwayomi_kindle/records").push(Index.new(config),client,input.cutoff)
     elseif action == "sync_pull" then
-        return require("suwayomi_kindle/records").pull(Index.new(config),client,input.cutoff)
+        return require("suwayomi_kindle/records").pull(Index.new(config),client,input.cutoff,input.all_chapters)
     elseif action == "sources" then
         return client:sources(input.language)
     elseif action == "source_seek" then
