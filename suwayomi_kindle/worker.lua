@@ -90,7 +90,7 @@ function Worker.start(ui, config, action, input, callback)
         pid = FFI.runInSubProcess(function() Worker.writeResult(file, config, action, input) end)
     end
     if not pid then file:close(); callback(nil, "无法启动后台任务。"); return end
-    local job = {deadline = os.time() + ((action == "download" or action == "sync_pull" or action == "sync_push" or action == "scan_downloads") and 1200 or (action == "library" or action == "source_seek" or action == "chapters") and 300 or 60)}
+    local job = {deadline = os.time() + ((action == "download" or action == "sync_pull" or action == "sync_push" or action == "scan_downloads") and 1200 or (action == "library" or action == "source_seek" or action == "chapters") and 300 or action == "recommendation_source" and 120 or 60)}
     function job:cancel()
         if self.cancelled or self.finished then return end
         self.cancelled = true

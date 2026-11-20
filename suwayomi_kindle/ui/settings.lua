@@ -230,7 +230,7 @@ function methods:build_recommendation_settings(screen_width, body_height)
                 save_section(self, "recommendation", {enabled = not config.enabled})
             end},
         rule(width),
-        stepper(self, width, "推荐前几部", {{5,"5"},{10,"10"},{15,"15"},{20,"20"},{25,"25"}}, config.limit,
+        stepper(self, width, "推荐前几部", {{5,"5"},{10,"10"},{15,"15"},{20,"20"},{24,"24"},{25,"25"},{36,"36"},{50,"50"}}, config.limit,
             function(value) save_section(self, "recommendation", {limit = value}) end),
         rule(width),
         stepper(self, width, "优先搜索源数", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"}}, config.sources,

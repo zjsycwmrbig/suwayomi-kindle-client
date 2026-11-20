@@ -285,21 +285,27 @@ worker.start=function(_,_,action,input,done)
     elseif action~="covers" then last_request,finish_request={action=action,input=input},done end
     return {cancel=function() end}
 end
-finish_request({media=90,items=recommendation_items,limit=5,fetched_at=os.time()})
-assert(#pending_sources==2)
-for i=1,5 do
+finish_request({media=90,items=recommendation_items,limit=5,version=2,fetched_at=os.time()})
+assert(#pending_sources==4)
+for i=1,4 do
     local task=assert(pending_sources[i])
     assert(task.item==100+i and task.source==pending_sources[1].source)
-    task.done({matches={{id=tostring(583+i),title="推荐漫画 "..i,source_id=task.source,source="源"}}})
+    task.done({matches={{id=tostring(583+i),title="推荐漫画 "..i,source_id=task.source,source="源",anilist_id=task.item}}})
     run_deferred()
 end
-assert(#pending_sources==5 and home.pagination.total==2)
+assert(#pending_sources==4 and home.pagination.total==2)
 home:find_recommendations(home:recommendation_state())
-assert(#pending_sources==5 and not home.recommendation_view.jobs)
+assert(#pending_sources==4 and not home.recommendation_view.jobs)
 assert(home.pagination.page_size==4 and find(home,"title","推荐漫画 4") and not find(home,"title","推荐漫画 5"))
 local shelf_row=assert(parent_of(home,find(home,"title","推荐漫画 4")))
 assert(not shelf_row[1].enabled and shelf_row[#shelf_row].icon=="chevron.right")
 shelf_row[#shelf_row].callback()
+assert(#pending_sources==5 and pending_sources[5].item==105)
+pending_sources[5].done({matches={}})
+run_deferred()
+assert(#pending_sources==6 and pending_sources[6].item==105 and pending_sources[5].source~=pending_sources[6].source)
+pending_sources[6].done({matches={{id="588",title="推荐漫画 5",source_id=pending_sources[6].source,anilist_id=105}}})
+run_deferred()
 local final_tile=assert(find(home,"title","推荐漫画 5"))
 shelf_row=assert(parent_of(home,final_tile))
 assert(not shelf_row[#shelf_row].enabled and shelf_row[1].icon=="chevron.left")

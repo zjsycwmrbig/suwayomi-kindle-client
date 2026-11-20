@@ -15,7 +15,7 @@ local defaults = {
     download = {directory = "", max_parallel = 1, retention = "1"},
     library = {view_mode = "list", sort = "title"},
     browse = {view_mode = "list", language = "zh", sort = "opened"},
-    recommendation = {enabled = true, limit = 5, sources = 3},
+    recommendation = {enabled = true, limit = 24, sources = 3},
 }
 
 local function fingerprint(settings)

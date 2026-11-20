@@ -1,54 +1,51 @@
-local json = require("dkjson")
+local Titles = require("suwayomi_kindle/manga_titles")
+local post = require("suwayomi_kindle/catalog_http")
 local AniList = {}
-local host = "graphql.anilist.co"
 local fields = [[id format title{english native romaji} synonyms]]
 
 local function request(query, variables)
-    local https = require("ssl.https")
-    local lfs = require("libs/libkoreader-lfs")
-    local ca = "/etc/ssl/certs/ca-certificates.crt"
-    if not lfs.attributes(ca) then ca = "/etc/ssl/cert.pem" end
-    local tls = https.tcp{verify="peer", cafile=ca}
-    local body = json.encode{query=query, variables=variables}
-    local chunks, size = {}, 0
-    local timeout = https.TIMEOUT
-    https.TIMEOUT = 8
-    local called, ok, code = pcall(require("socket.http").request, {
-        url="https://" .. host, method="POST", redirect=false,
-        headers={ ["Content-Type"]="application/json", ["Content-Length"]=tostring(#body) },
-        source=require("ltn12").source.string(body),
-        create=function()
-            local conn = tls()
-            local connect = conn.connect
-            function conn:connect(name, port)
-                if name ~= host then return nil, "unexpected host" end
-                connect(self, name, port)
-                local cert = self.sock:getpeercertificate()
-                local san = cert and cert:extensions()["2.5.29.17"]
-                for _, dns in ipairs(san and san.dNSName or {}) do
-                    if dns:lower()==host or dns:lower()=="*.anilist.co" then return 1 end
-                end
-                self.sock:close()
-                return nil, "certificate hostname mismatch"
+    return post("graphql.anilist.co", "", {query=query, variables=variables}, "AniList")
+end
+
+-- Search each distinct alias in one GraphQL round trip. Accept only an unambiguous exact name.
+local function lookup(names, transport)
+    local definitions, queries, variables = {}, {}, {}
+    for i = 1, math.min(6, #names) do
+        local key = "t" .. i
+        definitions[i] = "$" .. key .. ":String!"
+        queries[i] = key .. ":Page(perPage:5){media(type:MANGA,format_in:[MANGA,ONE_SHOT],isAdult:false,search:$"
+            .. key .. "){" .. fields .. "}}"
+        variables[key] = names[i]
+    end
+    if #queries == 0 then return false end
+    local query = "query(" .. table.concat(definitions, ",") .. "){" .. table.concat(queries, " ") .. "}"
+    local data, err = (transport or request)(query, variables)
+    if not data then return nil, err end
+    for i = 1, #queries do
+        local page = data["t" .. i]
+        if not page or type(page.media) ~= "table" then return nil, "AniList 作品响应不完整。" end
+        local id
+        for _, row in ipairs(page.media) do
+            if Titles.contains(Titles.anilist(row.title, row.synonyms), names[i]) then
+                if id and id ~= row.id then id = false; break end
+                id = row.id
             end
-            return conn
-        end,
-        sink=function(chunk, err)
-            if err then return nil, err end
-            if chunk then
-                size = size + #chunk
-                if size > 192*1024 then return nil, "response too large" end
-                chunks[#chunks+1] = chunk
-            end
-            return 1
-        end,
-    })
-    https.TIMEOUT = timeout
-    if called and ok and code == 429 then return nil, "AniList 请求过多，请稍后再试。" end
-    if not called or not ok or code ~= 200 then return nil, "无法获取 AniList 数据。" end
-    local decoded = json.decode(table.concat(chunks))
-    if not decoded or type(decoded.data)~="table" then return nil, "AniList 响应不完整。" end
-    return decoded.data
+        end
+        if id then return id end
+    end
+    return false
+end
+
+function AniList.resolve(title, transport)
+    local id, err = lookup({title}, transport)
+    if id or err then return id, err end
+    local aliases, alias_err = Titles.translations(title)
+    if not aliases then return nil, alias_err end
+    local names = {}
+    for _, alias in ipairs(aliases) do
+        if Titles.key(alias) ~= Titles.key(title) then names[#names+1] = alias end
+    end
+    return lookup(names, transport)
 end
 
 local function media(row)
@@ -58,22 +55,20 @@ local function media(row)
 end
 
 function AniList.recommend(id, title, limit, transport)
-    local selection = [[id recommendations(page:1,perPage:$limit,sort:RATING_DESC){
-        nodes{mediaRecommendation{type isAdult ]] .. fields .. [[}}}]]
-    local query
-    if id then
-        query = "query($id:Int!,$limit:Int!){Media(id:$id,type:MANGA){" .. selection .. "}}"
-    else
-        query = [[query($title:String!,$limit:Int!){Page(perPage:1){media(type:MANGA,
-            format_in:[MANGA,ONE_SHOT],isAdult:false,search:$title){]] .. selection .. "}}}"
+    if not id then
+        local resolved, err = AniList.resolve(title, transport)
+        if err then return nil, err end
+        if not resolved then return {items={}, limit=limit, fetched_at=os.time(), version=2} end
+        id = resolved
     end
-    local data, err = (transport or request)(query, {id=id,title=not id and title or nil,limit=limit})
+    local query = [[query($id:Int!,$limit:Int!){Media(id:$id,type:MANGA){
+        recommendations(page:1,perPage:$limit,sort:RATING_DESC){
+        nodes{mediaRecommendation{type isAdult ]] .. fields .. [[}}}}}]]
+    local data, err = (transport or request)(query, {id=id,limit=limit})
     if not data then return nil, err end
-    local origin = data.Media or (data.Page and data.Page.media and data.Page.media[1])
-    if not origin then return nil, "AniList 未找到对应作品。" end
-    id = origin.id
-    local nodes = origin.recommendations and origin.recommendations.nodes
-    if not id or not nodes then return nil, "AniList 未返回推荐列表。" end
+    local origin = data.Media
+    local nodes = origin and origin.recommendations and origin.recommendations.nodes
+    if type(nodes) ~= "table" then return nil, "AniList 未返回推荐列表。" end
     local items, seen = {}, {[id]=true}
     for _, node in ipairs(nodes) do
         local row = node.mediaRecommendation
@@ -84,7 +79,7 @@ function AniList.recommend(id, title, limit, transport)
             items[#items+1] = item
         end
     end
-    return {items=items, media=id, limit=limit, fetched_at=os.time()}
+    return {items=items, media=id, limit=limit, fetched_at=os.time(), version=2}
 end
 
 return AniList

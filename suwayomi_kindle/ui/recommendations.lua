@@ -25,9 +25,9 @@ local function fresh(timestamp)
 end
 
 local function update_results(view)
-    view.results = view.snapshot and Recommendations.results(view.snapshot, view.manga) or {}
-    local pages = math.ceil(#view.results / page_size)
-    view.page = math.max(1, math.min(view.page, pages))
+    local count = view.snapshot and #view.snapshot.items or 0
+    view.page = math.max(1, math.min(view.page, math.ceil(count / page_size)))
+    view.results = Recommendations.pageResults(view.snapshot, view.manga, view.page, page_size)
 end
 
 function View:recommendation_state()
@@ -35,7 +35,7 @@ function View:recommendation_state()
     if not manga or not self.settings.recommendation.enabled then return end
     if not self.recommendation_view or self.recommendation_view.manga ~= manga then
         local data, err = self:local_index():recommendationData(manga)
-        local view = {manga=manga, snapshot=data and data.snapshot, page=1, error=err}
+        local view = {manga=manga, snapshot=data and data.snapshot and data.snapshot.version == 2 and data.snapshot or nil, page=1, error=err}
         update_results(view)
         self.recommendation_view = view
     end
@@ -50,12 +50,13 @@ function View:cancel_recommendations()
     for _, job in pairs(jobs) do if job then job:cancel() end end
 end
 
-function View:find_recommendations(view)
-    if view.jobs or self.pending then return end
+function View:find_recommendations(view, page)
+    if view.jobs or (not page and self.pending) then return end
     local jobs, index = {}, self:local_index()
-    view.jobs, view.error, view.page = jobs, nil, 1
+    view.jobs, view.error, view.page = jobs, nil, page or 1
+    update_results(view)
     local config = self.settings.recommendation
-    local limit = math.max(1, math.min(25, math.floor(config.limit)))
+    local limit = math.max(1, math.min(50, math.floor(config.limit)))
 
     local function refresh()
         self.recommendation_scroll = true
@@ -88,42 +89,50 @@ function View:find_recommendations(view)
         save()
         if #snapshot.source_order == 0 then finish("当前语言下没有可搜索的漫画源。"); return end
 
-        local active, attempted, last_error = {}, {}, nil
+        local first = (view.page - 1) * page_size + 1
+        local last = math.min(first + page_size - 1, #snapshot.items)
+        local page_count = last - first + 1
+        local active, attempted, errors = {}, {}, {}
         local function advance()
             if view.jobs ~= jobs then return end
-            local count, completed = 0, 0
-            for _ in pairs(active) do count = count + 1 end
-            for _, item in ipairs(snapshot.items) do
+            local completed = 0
+            for n = first, last do
+                local item = snapshot.items[n]
                 if not active[item.id] then
                     item.sources = item.sources or {}
                     local pending
                     for i, id in ipairs(snapshot.source_order) do
                         local cached = item.sources[id]
                         local tried = attempted[item.id] and attempted[item.id][id]
-                        if not tried and (not cached or cached.failed or not fresh(cached.checked_at)) then
+                        if not tried and (not cached or not cached.verified or cached.failed or not fresh(cached.checked_at)) then
                             pending = sources[i]
                             break
                         end
-                        if cached and #cached.matches > 0 then break end
+                        if cached and cached.verified and #cached.matches > 0 and not cached.failed then
+                            errors[item.id] = nil
+                            break
+                        end
                     end
                     if not pending then
                         completed = completed + 1
-                    elseif count < 2 then
+                    else
                         local id = pending.id
-                        active[item.id], count = true, count + 1
+                        active[item.id] = true
                         attempted[item.id] = attempted[item.id] or {}
                         attempted[item.id][id] = true
                         run(item.id, "recommendation_source", {source=pending,item={
-                            id=item.id, titles=item.titles, synonyms=item.synonyms, origin=view.manga,
+                            id=item.id, titles=item.titles, synonyms=item.synonyms, translations=item.translations, origin=view.manga,
                         }}, function(found, err)
                             active[item.id] = nil
                             local previous = item.sources[id]
                             if found then
-                                found.checked_at = os.time()
+                                item.translations = found.translations or item.translations
+                                found.translations = nil
+                                found.checked_at, found.verified = os.time(), true
                                 item.sources[id] = found
                             else
-                                last_error = err or "漫画源搜索失败。"
-                                item.sources[id] = {failed=true, matches=previous and previous.matches or {}}
+                                errors[item.id] = err or "漫画源搜索失败。"
+                                item.sources[id] = {failed=true, verified=previous and previous.verified, matches=previous and previous.matches or {}}
                             end
                             update_results(view)
                             save()
@@ -132,8 +141,12 @@ function View:find_recommendations(view)
                     end
                 end
             end
-            if completed == #snapshot.items then finish(last_error); return end
-            view.busy = string.format("正在匹配漫画源… %d/%d", completed, #snapshot.items)
+            if completed == page_count then
+                local _, err = next(errors)
+                finish(err)
+                return
+            end
+            view.busy = string.format("正在匹配漫画源… %d/%d", completed, page_count)
             refresh()
         end
         advance()
@@ -150,16 +163,21 @@ function View:find_recommendations(view)
         end)
     end
     local previous = view.snapshot
-    if previous and previous.limit == limit and fresh(previous.fetched_at) then resolve_sources(); return end
+    if previous and previous.version == 2 and (page or (previous.limit == limit and fresh(previous.fetched_at))) then
+        resolve_sources(); return
+    end
     view.busy = "正在查询 AniList…"
     refresh()
-    local media = self.detail.anilist_id or (previous and previous.media)
+    local media = self.detail.anilist_id or (previous and previous.version == 2 and previous.media) or nil
     run("ani", "anilist_recommend", {id=media, title=self.detail.title, limit=limit}, function(snapshot, err)
         if not snapshot then finish(err); return end
         if previous and previous.media == snapshot.media then
             local matches = {}
-            for _, item in ipairs(previous.items) do matches[item.id] = item.sources end
-            for _, item in ipairs(snapshot.items) do item.sources = matches[item.id] end
+            for _, item in ipairs(previous.items) do matches[item.id] = item end
+            for _, item in ipairs(snapshot.items) do
+                local old = matches[item.id]
+                if old then item.sources, item.translations = old.sources, old.translations end
+            end
             snapshot.source_order = previous.source_order
         end
         view.snapshot = snapshot
@@ -180,20 +198,22 @@ end
 function View:build_recommendations(column, width, posters)
     local view = self:recommendation_state()
     if not view or not (view.snapshot or view.busy or view.error) then return end
-    note(column, width, "相似漫画 · AniList", 17)
+    local count = view.snapshot and #view.snapshot.items or 0
+    note(column, width, count > 0 and ("相似漫画 · AniList · " .. count .. " 部候选") or "相似漫画 · AniList", 17)
     if view.busy then note(column, width, view.busy) end
     if view.error then note(column, width, view.error) end
-    local count = #view.results
     if count == 0 then
-        if not view.busy and not view.error then note(column, width, "暂未找到可读的推荐漫画。") end
+        if not view.busy and not view.error then note(column, width, "无推荐漫画。") end
         return
+    end
+    if #view.results == 0 and not view.busy and not view.error then
+        note(column, width, "本页暂无通过 AniList 核对的漫画源结果。")
     end
     local total = self:recommendation_page_count(view)
     local function go(page)
         if page < 1 or page > total or page == view.page then return end
-        view.page = page
-        self.recommendation_scroll = true
-        self:refresh()
+        self:cancel_recommendations()
+        self:find_recommendations(view, page)
     end
     self.pagination = {page=view.page, total=total, page_size=page_size, item_count=count, go=go}
     local arrow_width = math.min(Screen:scaleBySize(36), math.floor(width / 12))
@@ -207,9 +227,7 @@ function View:build_recommendations(column, width, posters)
     local tiles = Row:new{align="center", allow_mirroring=false, arrow("chevron.left", view.page - 1)}
     local cover_space = width - 2 * arrow_width
     local tile_width = math.floor(cover_space / page_size)
-    local first = (view.page - 1) * page_size + 1
-    for i = first, math.min(count, first + page_size - 1) do
-        local candidate = view.results[i]
+    for _, candidate in ipairs(view.results) do
         posters[#posters+1] = candidate
         tiles[#tiles+1] = Tile:new{width=tile_width, title=candidate.title,
             subtitle=candidate.author and candidate.author ~= "" and candidate.author or candidate.source,
@@ -217,14 +235,14 @@ function View:build_recommendations(column, width, posters)
             path=Covers.path(self.settings.connection, candidate),
             callback=function() self:open_recommended(view, candidate) end}
     end
-    local visible = math.min(page_size, count - first + 1)
+    local visible = #view.results
     tiles[#tiles+1] = Gap:new{width=cover_space - visible * tile_width}
     tiles[#tiles+1] = arrow("chevron.right", view.page + 1)
     column[#column+1] = tiles
 end
 
 function View:recommendation_page_count(view)
-    return math.max(1, math.ceil(#view.results / page_size))
+    return math.max(1, math.ceil((view.snapshot and #view.snapshot.items or 0) / page_size))
 end
 
 return View

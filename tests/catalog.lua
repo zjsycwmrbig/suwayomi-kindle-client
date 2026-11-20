@@ -119,7 +119,7 @@ local recommendation = {id=123,titles={english="Kaiju No.8", native="怪獣８�
 local requests = 0
 local source_fixture = {sourcePage=function(_, input)
     requests = requests+1
-    assert(input.search == "怪獣８号" and input.page == 1)
+    assert(input.search == "怪兽8号" and input.page == 1)
     return {mangas={
         {id="42",title="怪兽8号 RELAX",author="Naoya Matsumoto"},
         {id="43",title="怪兽 ８ 号",author="Naoya Matsumoto"},
@@ -132,15 +132,28 @@ end}
 local source = {id="zh",name="Chinese source",lang="zh-Hans"}
 local source_search = matching.search(source_fixture,source,recommendation)
 assert(requests==1 and #source_search.matches==1 and source_search.matches[1].id=="45")
-local other_edition = {id="54",title="Kaiju No.8"}
-recommendation.sources={zh=source_search,en={matches={other_edition}}}
-local snapshot = {source_order={"zh","en"}, media=1, items={
-    recommendation, recommendation, {id=125,sources={zh={matches={{id="45",anilist_id=123}}}}},
+local anilist = require("suwayomi_kindle/anilist")
+local original_resolve = anilist.resolve
+local checked = 0
+anilist.resolve = function(title)
+    checked = checked + 1
+    assert(title=="怪兽8号")
+    return 124
+end
+source_fixture.sourcePage=function() return {mangas={{id="46",title="怪兽8号"}}} end
+recommendation.translations={}
+assert(#matching.search(source_fixture,source,recommendation).matches==0 and checked==1)
+anilist.resolve = original_resolve
+source_search.verified=true
+local other_edition = {id="54",title="Kaiju No.8",anilist_id=123}
+recommendation.sources={zh=source_search,en={verified=true,matches={other_edition}}}
+local snapshot = {source_order={"zh","en"}, media=1, items={recommendation,
+    {id=125,sources={zh={verified=true,matches={{id="45",anilist_id=123}}}}},
 }}
-local matched = matching.results(snapshot, "42")
+local matched = matching.pageResults(snapshot, "42", 1, 4)
 assert(#matched==1 and matched[1].id=="45")
 snapshot.source_order={"en","zh"}
-matched = matching.results(snapshot, "42")
+matched = matching.pageResults(snapshot, "42", 1, 4)
 assert(#matched==1 and matched[1].id=="54")
 local Chapters = require("suwayomi_kindle/chapters")
 local api = {chapterPage = function(_,_,offset,limit)
