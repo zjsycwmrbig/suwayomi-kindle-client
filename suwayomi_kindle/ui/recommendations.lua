@@ -245,7 +245,7 @@ function View:build_recommendations(width, height, posters)
             path = Covers.path(self.settings.connection, candidate)
             open = function() self:open_recommended(view, candidate) end
         else
-            title = item.title
+            title = Recommendations.preferredTitle(item, self.settings.recommendation.search_languages)
             subtitle = "去探索搜索"
             open = function() self:search_recommended(item) end
         end

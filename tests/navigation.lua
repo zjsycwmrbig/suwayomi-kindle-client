@@ -279,6 +279,9 @@ assert(last_request.action=="anilist_recommend" and last_request.input.title=="�
 assert(last_request.input.limit==5)
 local recommendation_items={}
 for i=1,5 do recommendation_items[i]={id=100+i,title="相似漫画 "..i,titles={},synonyms={}} end
+recommendation_items[1].title="Similar Manga 1"
+recommendation_items[1].titles={english="Similar Manga 1"}
+recommendation_items[1].synonyms={"相似漫画 1"}
 local pending_sources={}
 worker.start=function(_,_,action,input,done)
     if action=="recommendation_source" then
@@ -339,6 +342,10 @@ local snapshot=home:recommendation_state().snapshot
 snapshot.items[1].sources = {}
 home.recommendation_view=nil
 assert(home.index:saveRecommendations("84",snapshot))
+home.settings.recommendation.search_languages="en,zh,ja"
+home:refresh()
+assert(find(home,"title","Similar Manga 1"))
+home.settings.recommendation.search_languages="zh,en,ja"
 home:refresh()
 assert(find(home,"title","相似漫画 1")).callback()
 run_deferred()

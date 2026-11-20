@@ -48,6 +48,11 @@ local function search_names(item, order)
     return names, known
 end
 
+function Recommendations.preferredTitle(item, order)
+    local names = search_names(item, order)
+    return names[1] or item.title
+end
+
 function Recommendations.explore(client, input)
     local fetch = require("suwayomi_kindle/source_pages").fetch
     local names = search_names(input.recommended_item, input.search_languages)

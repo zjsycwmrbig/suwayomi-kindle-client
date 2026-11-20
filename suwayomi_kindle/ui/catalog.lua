@@ -140,7 +140,7 @@ local function start_source(home, source, manual)
     b.source, b.results, b.counts, b.ended = source, nil, {}, false
     local item = b.recommended_item
     b.recommended_item = nil
-    local query = item and item.title
+    local query = item and require("suwayomi_kindle/recommendations").preferredTitle(item, home.settings.recommendation.search_languages)
     b.mode, b.page, b.slice, b.search, b.query = query and "SEARCH" or "POPULAR", 1, 1, query, query or ""
     home:refresh()
     fetch_page(home, b.mode, query, home.catalog_size, 1, true, nil, item)
