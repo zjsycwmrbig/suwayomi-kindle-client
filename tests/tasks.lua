@@ -119,5 +119,46 @@ assert(Tasks.page(ix,"files",1,10,{manga="784"}).count==0)
 assert(ix:with_db(function(db)
     return tonumber(db:rowexec("SELECT count(*) FROM file_stamp WHERE manga='784'"))==0
 end))
+
+-- Delete a failed job after changing download directories. Only its own
+-- archive and numbered partial files are eligible for cleanup.
+local previous_root=tmp.."/previous"
+local attempt=assert(Downloads.claim(ix,previous_root))
+assert(attempt.id==17 and Downloads.finish(ix,attempt,"failed"))
+local previous=Chapters.downloadPath(ix,attempt)
+local current=path("7",17)
+track("7",17,previous)
+track(nil,nil,previous..".12.part")
+track(nil,nil,current..".13.part")
+track(nil,nil,path("7",99)..".12.part")
+local failed_job=assert(Tasks.page(ix,"queue",1,10,{filter="failed"})).rows[1]
+local removed=assert(Tasks.deleteQueue(ix,{failed_job},root))
+assert(removed.tasks==1 and removed.files==1 and removed.parts==2 and removed.failed==0)
+assert(not lfs.attributes(previous) and not lfs.attributes(previous..".12.part") and not lfs.attributes(current..".13.part"))
+assert(lfs.attributes(path("7",99)..".12.part") and lfs.attributes(guarded.path))
+assert(Downloads.configure(ix,"7","ahead",3) and Downloads.enqueue(ix,"7","auto"))
+assert(Tasks.page(ix,"queue",1,10).count==1)
+assert(Downloads.enqueue(ix,"7","single",17).count==1)
+attempt=assert(Downloads.claim(ix,root))
+assert(attempt.id==17)
+track(nil,nil,current..".42.part")
+local running=assert(Tasks.page(ix,"queue",1,10,{filter="active"})).rows[1]
+removed=assert(Tasks.deleteQueue(ix,{running},root))
+assert(removed.tasks==1 and removed.parts==1 and #removed.stopped==1)
+assert(Downloads.finish(ix,attempt,"late failure") and Tasks.page(ix,"queue",1,10,{filter="failed"}).count==0)
+local png=require("mime").unb64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l2kAAAAASUVORK5CYII=")
+local mock={request=function() return {fetchChapterPages={pages={"/p/1"},chapter={id=17,manga={id=7}}}} end,
+    pageImage=function() return png end}
+local late,why=Chapters.download(ix,mock,attempt)
+assert(not late and why:find("暂停",1,true) and not lfs.attributes(current))
+
+assert(Downloads.enqueue(ix,"7","single",17))
+attempt=assert(Downloads.claim(ix,root))
+running=assert(Tasks.page(ix,"queue",1,10,{filter="active"})).rows[1]
+assert(Chapters.download(ix,mock,attempt).path==current)
+removed=assert(Tasks.deleteQueue(ix,{running},root,current))
+assert(removed.kept==1 and lfs.attributes(current))
+removed=assert(Tasks.deleteQueue(ix,{running},root))
+assert(removed.files==1 and not lfs.attributes(current))
 require("ffi/util").purgeDir(tmp)
-print("Task filters, retry, guarded deletion, inventory and orphan scan passed")
+print("Task filters, retry, guarded deletion, queue cancellation and orphan scan passed")

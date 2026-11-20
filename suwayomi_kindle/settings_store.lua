@@ -11,6 +11,7 @@ local defaults = {
     connection = {server_url = "", auth_method = "none", username = "", password = "",
         last_verified_credential_hash = "", last_verified_at = 0},
     theme = {mode = "day"},
+    general = {confirm_exit = true},
     download = {directory = "", max_parallel = 1, retention = "1"},
     library = {view_mode = "list", sort = "title"},
     browse = {view_mode = "list", language = "zh", sort = "opened"},
@@ -39,7 +40,8 @@ function Store:load(section)
     local data = LuaSettings:open(path).data
     local values = {}
     for key, value in pairs(defaults[section]) do
-        values[key] = type(data[key]) == type(value) and data[key] or value
+        if type(data[key]) == type(value) then values[key] = data[key]
+        else values[key] = value end
     end
     return values
 end

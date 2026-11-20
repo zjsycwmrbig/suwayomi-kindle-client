@@ -36,7 +36,8 @@ function Sync:build_sync(screen_width,height)
         if not status then note(err)
         else
             self.log_page=status.page
-            self.pagination={page=status.page,total=status.pages,go=function(n) self.log_page=n; self:refresh() end}
+            self.pagination={page=status.page,total=status.pages,page_size=limit,item_count=status.log_count,
+                go=function(n) self.log_page=n; self:refresh() end}
             local busy=Service.session(index,self).busy
             col[#col+1]=Row:new{width=width,label="同步本地记录",value="上传已读状态和页码 · 待上传 " .. status.count .. " 项",
                 callback=function() self:start_sync("push",status) end}

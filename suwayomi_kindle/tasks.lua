@@ -162,11 +162,7 @@ local function inside(path,root)
     return path and root and path:sub(1,#root+1)==root .. "/"
 end
 
--- Delete only the exact indexed copy or a scanned orphan below this account's
--- configured download root. The open reader file and unknown paths are kept.
-function Tasks.deleteFiles(index,selections,root,open_path)
-    return index:with_db(function(db)
-        db:exec("BEGIN IMMEDIATE")
+local function delete_files(db,index,selections,root,open_path)
         local count,failed,kept,missing=0,0,0,0
         local scope=index.path:match("/(%x+)%.sqlite3$")
         for _,item in pairs(selections or {}) do
@@ -208,8 +204,84 @@ function Tasks.deleteFiles(index,selections,root,open_path)
                 if absent then missing=missing+1 else count=count+1 end
             else failed=failed+1 end
         end
-        db:exec("COMMIT")
         return {count=count,failed=failed,kept=kept,missing=missing}
+end
+
+-- Delete only the exact indexed copy or a scanned orphan below the download root.
+function Tasks.deleteFiles(index,selections,root,open_path)
+    return index:with_db(function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local result=delete_files(db,index,selections,root,open_path)
+        db:exec("COMMIT")
+        return result
+    end)
+end
+
+local function clear_parts(path,suffix)
+    if not path or path:sub(-#suffix)~=suffix then return 0,0 end
+    local dir,name=path:match("^(.*)/([^/]+)$")
+    local dir_suffix=suffix:match("^(.*)/[^/]+$")
+    local real_dir=require("ffi/util").realpath(dir)
+    if not real_dir then
+        local _,_,errno=lfs.symlinkattributes(dir)
+        return 0,errno==2 and 0 or 1
+    end
+    if real_dir:sub(-#dir_suffix)~=dir_suffix then return 0,1 end
+    local ok,iter,handle=pcall(lfs.dir,real_dir)
+    if not ok or not iter then return 0,1 end
+    local removed,failed=0,0
+    for file in iter,handle do
+        if file:sub(1,#name)==name and file:sub(#name+1):match("^%.%d+%.part$") then
+            local part=real_dir.."/"..file
+            local mode,_,errno=lfs.symlinkattributes(part,"mode")
+            if mode=="file" and os.remove(part) then removed=removed+1
+            elseif errno~=2 then failed=failed+1 end
+        end
+    end
+    return removed,failed
+end
+
+function Tasks.deleteQueue(index,selections,root,open_path)
+    return index:with_db(function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local read=db:prepare([[SELECT q.state,q.target_path,f.path FROM queue q
+            LEFT JOIN files f USING(manga,id) WHERE q.manga=? AND q.id=?]])
+        local saved=db:prepare("SELECT path FROM files WHERE manga=? AND id=?")
+        local remove=db:prepare("DELETE FROM queue WHERE manga=? AND id=?")
+        local exclude=db:prepare("INSERT OR IGNORE INTO auto_download_excluded VALUES(?,?)")
+        local scope=assert(index.path:match("/(%x+)%.sqlite3$"))
+        local result={tasks=0,parts=0,failed=0,stopped={}}
+        local files={}
+        for _,item in ipairs(selections) do
+            local manga,id=tostring(item.manga),tonumber(item.id)
+            if manga:match("^%d+$") and id and id>0 and id%1==0 then
+                local row=read:reset():bind(manga,id):step()
+                -- A selected task may finish while its confirmation is open.
+                local finished=not row and saved:reset():bind(manga,id):step()
+                if row or finished then
+                    local path=row and row[3] or finished and finished[1]
+                    if path then files[#files+1]={manga=manga,id=id,path=path} end
+                    remove:reset():bind(manga,id):step()
+                    exclude:reset():bind(manga,id):step()
+                    result.stopped[#result.stopped+1]={manga=manga,id=id}
+                    result.tasks=result.tasks+1
+                    local suffix="/Suwayomi/"..scope.."/"..manga.."/"..id..".cbz"
+                    local fallback=normalized(root)..suffix
+                    local target=row and row[2] or fallback
+                    local parts,failed=clear_parts(target,suffix)
+                    result.parts,result.failed=result.parts+parts,result.failed+failed
+                    if target~=fallback then
+                        parts,failed=clear_parts(fallback,suffix)
+                        result.parts,result.failed=result.parts+parts,result.failed+failed
+                    end
+                end
+            end
+        end
+        local cleanup=delete_files(db,index,files,root,open_path)
+        result.files,result.kept,result.missing=cleanup.count,cleanup.kept,cleanup.missing
+        result.failed=result.failed+cleanup.failed
+        db:exec("COMMIT")
+        return result
     end)
 end
 

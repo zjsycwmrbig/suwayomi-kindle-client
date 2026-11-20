@@ -38,12 +38,12 @@ local LIBRARY_QUERY = [[query KindleLibrary($first: Int!, $offset: Int!) {
   mangas(filter: {inLibrary: {equalTo: true}}, first: $first, offset: $offset,
       order: [{by: ID, byType: ASC}]) {
     totalCount pageInfo { hasNextPage }
-    nodes { id title author inLibraryAt unreadCount chapters { totalCount } thumbnailUrl source { displayName } }
+    nodes { id title author status inLibraryAt unreadCount chapters { totalCount } thumbnailUrl source { displayName } }
   }
 }]]
 local SOURCE_MANGA_QUERY = [[mutation KindleSourceManga($input: FetchSourceMangaInput!) {
   fetchSourceManga(input: $input) {
-    hasNextPage mangas { id title author description chapters { totalCount } thumbnailUrl inLibrary }
+    hasNextPage mangas { id title author status description chapters { totalCount } thumbnailUrl inLibrary }
   }
 }]]
 local ADD_MUTATION = [[mutation KindleAdd($input: UpdateMangaInput!) {
@@ -287,6 +287,7 @@ local function manga_rows(nodes)
     for i, item in ipairs(nodes) do
         if type(item) ~= "table" or not tonumber(item.id) or string_field(item.title) == "" then return nil end
         rows[i] = {id = tostring(item.id), title = item.title, author = string_field(item.author),
+            status = type(item.status) == "string" and item.status or "UNKNOWN",
             thumbnail = string_field(item.thumbnailUrl), description = string_field(item.description),
             source = type(item.source) == "table" and string_field(item.source.displayName) or "",
             chapters = type(item.chapters) == "table" and tonumber(item.chapters.totalCount) or nil,
@@ -352,7 +353,7 @@ function Connection:addManga(id)
 end
 
 function Connection:manga(id)
-    local fields = " id title initialized firstUnreadChapter { id } author description thumbnailUrl unreadCount inLibrary chapters { totalCount } source { displayName } "
+    local fields = " id title initialized firstUnreadChapter { id } author status description thumbnailUrl unreadCount inLibrary chapters { totalCount } source { displayName } "
     local data, err = self:request("query($id:Int!){manga(id:$id){" .. fields .. "}}", {id = tonumber(id)})
     local item = data and data.manga
     if item and item.initialized == false then

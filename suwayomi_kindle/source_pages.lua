@@ -12,12 +12,19 @@ function Pages.before(counts, remote, size)
     return offset
 end
 
+function Pages.itemsBefore(counts, remote)
+    local offset = 0
+    for i = 1, remote - 1 do offset = offset + counts[i] end
+    return offset
+end
+
 function Pages.fetch(client, input)
     local counts, size = input.counts or {}, input.size
     local target = input.target == "last" and math.huge or input.target
+    local by_item = input.by_item
     local page, offset = 1, 0
     while counts[page] do
-        local n = Pages.screens(counts[page], size)
+        local n = by_item and counts[page] or Pages.screens(counts[page], size)
         if offset + n >= target or (input.ended and page == #counts) then break end
         offset, page = offset + n, page + 1
     end
@@ -40,11 +47,14 @@ function Pages.fetch(client, input)
             for j = #counts, page + 1, -1 do counts[j] = nil end
             ended = true
         elseif page == #counts then ended = false end
-        if target <= offset + n or not data.has_next then
-            return {results = data, remote = page, slice = math.min(n, target - offset),
+        local units = by_item and count or n
+        if by_item and target > offset + units and not data.has_next then return nil, "没有这么多项目。" end
+        if target <= offset + units or not data.has_next then
+            local part = by_item and math.ceil((target - offset) / size) or math.min(n, target - offset)
+            return {results = data, remote = page, slice = part,
                 counts = counts, ended = ended}
         end
-        page, offset = page + 1, offset + n
+        page, offset = page + 1, offset + units
     end
 end
 return Pages

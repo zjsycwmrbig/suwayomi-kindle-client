@@ -19,18 +19,27 @@ local client = mock([[{"data":{"sources":{"nodes":[
 assert(#client:sources("zh").sources == 3)
 assert(client:sources("en").sources[1].id == "4")
 assert(#client:sources("all").sources == 4)
-client = mock([[{"data":{"fetchSourceManga":{"hasNextPage":false,"mangas":[{"id":9,"title":"Book","inLibrary":true,"chapters":{"totalCount":23}}]}}}]],
+client = mock([[{"data":{"fetchSourceManga":{"hasNextPage":false,"mangas":[{"id":9,"title":"Book","inLibrary":true,"status":"COMPLETED","chapters":{"totalCount":23}}]}}}]],
     function(request)
         local input = request.variables.input
         assert(input.page == 2 and input.type == "SEARCH" and input.source == "11" and input.query == "Book")
+        assert(request.query:find(" status ", 1, true))
     end)
 local results = assert(client:sourcePage{source = {id = "11", name = "Source"}, page = 2, mode = "SEARCH", search = "Book"})
 assert(results.mangas[1].chapters == 23)
+assert(results.mangas[1].status == "COMPLETED")
 assert(results.mangas[1].in_library and results.mangas[1].id == "9" and not results.has_next)
 assert(mock([[{"data":{"updateManga":{"manga":{"id":9,"inLibrary":true}}}}]]):addManga("9"))
 assert(not mock([[{"data":{"updateManga":{"manga":{"id":2,"inLibrary":true}}}}]]):addManga("9"))
 assert(not mock("[]"):libraryPage(0, 5))
 assert(not mock([[{"data":{"mangas":{"totalCount":0,"nodes":{},"pageInfo":{"hasNextPage":false}}}}]]):libraryPage(0, 5))
+local function status_query(request)
+    assert(request.query:find(" status ", 1, true) and not request.query:find("fetchChapters", 1, true))
+end
+local shelf_api = mock([[{"data":{"mangas":{"totalCount":2,"nodes":[{"id":9,"title":"Book","status":"COMPLETED"},
+    {"id":10,"title":"Other"}],"pageInfo":{"hasNextPage":false}}}}]], status_query)
+local detail_api = mock([[{"data":{"manga":{"id":9,"title":"Book","status":"ON_HIATUS","initialized":true}}}]], status_query)
+assert(detail_api:manga("9").status == "ON_HIATUS")
 
 local root = os.tmpname()
 os.remove(root)
@@ -45,6 +54,10 @@ db:exec([[CREATE TABLE manga(id TEXT PRIMARY KEY,title TEXT,author TEXT,source T
 db:close()
 local migrated = assert(ix:page(1, 9))
 assert(migrated.count == 1 and migrated.synced == 0 and migrated.items[1].chapters == nil)
+assert(ix:refresh(function(offset, limit) return shelf_api:libraryPage(offset, limit) end))
+local status_page = assert(ix:page(1, 5))
+assert(status_page.items[1].status == "COMPLETED" and status_page.items[2].status == "UNKNOWN")
+assert(ix:with_db(function(db) return tonumber(db:rowexec("SELECT count(*) FROM directories")) == 0 end))
 local function manga(n)
     return {id = tostring(n), title = string.format("Book %05d", n), source = "Source", author = "", thumbnail = "", added = 1700000000+n, chapters = n, unread = 0}
 end

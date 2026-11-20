@@ -18,6 +18,7 @@ local Paragraph = require("ui/widget/textboxwidget")
 local Button = require("suwayomi_kindle/ui/flat_button")
 local SettingRow = require("suwayomi_kindle/ui/setting_row")
 local Progress = require("suwayomi_kindle/ui/reading_progress")
+local MangaStatus = require("suwayomi_kindle/manga_status")
 local Tile = require("suwayomi_kindle/ui/manga_tile")
 local Worker = require("suwayomi_kindle/worker")
 local Index = require("suwayomi_kindle/library_index")
@@ -109,11 +110,11 @@ function Catalog:fetch_sources()
     end)
 end
 
-local function fetch_page(home, mode, search, size, target, reset)
+local function fetch_page(home, mode, search, size, target, reset, by_item)
     local b = home.browse
     home:request_catalog("source_seek", {source = b.source, mode = mode, size = size,
         search = search, counts = not reset and b.counts or {}, ended = not reset and b.ended,
-        target = target}, function(data)
+        target = target, by_item = by_item}, function(data)
         b.mode, b.search, b.page, b.slice = mode, search, data.remote, data.slice
         b.results, b.counts, b.ended = data.results, data.counts, data.ended
     end)
@@ -344,6 +345,7 @@ local function manga_list(home, column, width, items, grid, poster_height)
             home:open_directory(true)
         end or nil
         local chapters = item.chapters and (item.chapters .. " 章") or "章节数待刷新"
+        local status = MangaStatus.label(item.status)
         local shelf = home.selected_tab == "library"
         if not shelf and item.unread then chapters = chapters .. " · " .. item.unread .. " 未读" end
         if grid then
@@ -356,7 +358,7 @@ local function manga_list(home, column, width, items, grid, poster_height)
                 subtitle = item.author
             end
             tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = subtitle,
-                badge = badge, short_badge = short_badge,
+                badge = badge, short_badge = short_badge, status_badge = status,
                 poster_height = poster_height, path = Covers.path(home.settings.connection, item), callback = open, hold_callback = continue}
         else
             local path = Covers.path(home.settings.connection, item)
@@ -369,7 +371,7 @@ local function manga_list(home, column, width, items, grid, poster_height)
             end
             if shelf then chapters = chapters .. " · " .. (item.downloaded or 0) .. " 已下载" end
             if not shelf and item.in_library then chapters = chapters .. " · 已入书架" end
-            column[#column + 1] = SettingRow:new{label = item.title, value = chapters,
+            column[#column + 1] = SettingRow:new{label = item.title, value = status .. " · " .. chapters,
                 detail_line = #credits > 0 and table.concat(credits," · ") or nil,
                 leading = poster, trailing=shelf and Progress.new(item.chapters,item.unread) or nil, hide_chevron=shelf, width = width, inset=4, leading_width=56, callback = open, hold_callback=continue,
                 row_height=72}
@@ -401,7 +403,7 @@ local function library(home, column, width, size, grid, poster_height)
     local pages = math.ceil(data.count / size)
     note(column, width, data.count .. " 部漫画")
     manga_list(home, column, width, data.items, grid, poster_height)
-    home.pagination = {page = data.page, total = pages, go = function(n)
+    home.pagination = {page = data.page, total = pages, page_size = size, item_count = data.count, go = function(n)
         home.shelf_page = n
         home:refresh()
     end}
@@ -424,7 +426,8 @@ local function sources(home, column, width, size)
     if #items == 0 then note(column, width, "没有符合语言和搜索条件的漫画源。"); return end
     local visible, page, pages = slice(items, b.sources_page, size)
     b.sources_page = page
-    home.pagination = {page = page, total = pages, go = function(n) b.sources_page = n; home:refresh() end}
+    home.pagination = {page = page, total = pages, page_size = size, item_count = #items,
+        go = function(n) b.sources_page = n; home:refresh() end}
     for _, source in ipairs(visible) do
         local tags = {Languages.label(Languages.base(source.lang))}
         if source.id == history.default_id then tags[#tags+1] = "默认源" end
@@ -452,7 +455,18 @@ local function source_manga(home, column, width, size, grid, poster_height)
     b.slice = part
     local before = Pages.before(b.counts, b.page, size)
     local total = b.ended and Pages.before(b.counts, #b.counts+1, size) or nil
-    home.pagination = {page = before+part, total = total, busy = home.pending ~= nil, go = function(n)
+    local item_before = Pages.itemsBefore(b.counts, b.page)
+    local item_count = b.ended and Pages.itemsBefore(b.counts, #b.counts+1) or nil
+    local function go_item(n)
+        if n > item_before and n <= item_before + #b.results.mangas then
+            b.slice = math.ceil((n - item_before) / size)
+            home:refresh()
+        else
+            fetch_page(home, b.mode, b.search, size, n, false, true)
+        end
+    end
+    home.pagination = {page = before+part, total = total, busy = home.pending ~= nil,
+        item_count = item_count, go_item = item_count ~= 0 and go_item or nil, go = function(n)
         if type(n) == "number" and n > before and n <= before+parts then
             b.slice = n-before
             home:refresh()

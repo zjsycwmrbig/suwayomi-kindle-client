@@ -20,15 +20,32 @@ function Tile:init()
     local cover = self.path and Image:new{original_in_nightmode = true, file = self.path, width = poster_w, height = poster_h}
         or Icons.widget("library", screen:scaleBySize(36))
     local poster = Center:new{dimen = Geom:new{w = poster_w, h = poster_h}, cover}
-    if self.badge then
+    if self.badge or self.status_badge then
         local pad = screen:scaleBySize(3)
         local available = math.max(1, poster_w - 2 * (pad + 1))
-        local label = Text:new{text = self.badge, face = Font:getFace("smallinfofontbold", 13)}
-        if self.short_badge and label:getWidth() > available then label:setText(self.short_badge) end
-        label:setMaxWidth(available)
-        poster = Overlap:new{dimen = poster.dimen, allow_mirroring = false, poster,
-            Frame:new{overlap_align = "right", bordersize = 1, padding = pad, padding_top = 0,
-                padding_bottom = 0, background = BB.COLOR_WHITE, label}}
+        local function badge(text, short)
+            local label = Text:new{text = text, face = Font:getFace("smallinfofontbold", 13), max_width = available}
+            if short and label:isTruncated() then label:setText(short) end
+            return Frame:new{bordersize = 1, padding = pad, padding_top = 0,
+                padding_bottom = 0, background = BB.COLOR_WHITE, label}
+        end
+        local layers = {dimen = poster.dimen, allow_mirroring = false, poster}
+        local progress_height = 0
+        if self.badge then
+            local progress = badge(self.badge, self.short_badge)
+            progress.overlap_align = "right"
+            progress_height = progress:getSize().h
+            layers[#layers+1] = progress
+        end
+        if self.status_badge then
+            local status = badge(self.status_badge)
+            local y = poster_h - status:getSize().h
+            if y >= progress_height then
+                status.overlap_offset = {0, y}
+                layers[#layers+1] = status
+            end
+        end
+        poster = Overlap:new(layers)
     end
     local body = Column:new{align = "center",
         Frame:new{padding = 0, bordersize = 1, poster},

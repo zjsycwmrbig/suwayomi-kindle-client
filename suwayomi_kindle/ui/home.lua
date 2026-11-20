@@ -32,7 +32,7 @@ local Home = InputContainer:extend{
 
 local TAB_ITEMS = {
     { id = "library", label = "书架", icon = "library" },
-    { id = "browse", label = "浏览", icon = "browse" },
+    { id = "browse", label = "探索", icon = "browse" },
     { id = "tasks", label = "下载任务", icon = "download" },
     { id = "settings", label = "设置", icon = "settings" },
 }
@@ -41,7 +41,7 @@ function Home:init()
     self.dimen = Screen:getSize()
     self.covers_fullscreen = true
     self.settings = {}
-    for _, section in ipairs({"connection", "download", "library", "browse", "theme"}) do
+    for _, section in ipairs({"connection", "download", "library", "browse", "theme", "general"}) do
         self.settings[section] = self.settings_store:load(section)
     end
     self.previous_night_mode = Screen.night_mode == true
@@ -77,6 +77,19 @@ end
 
 function Home:close()
     UIManager:close(self)
+end
+
+function Home:request_exit()
+    if not self.settings.general.confirm_exit then self:close(); return end
+    if self.exit_dialog and UIManager:isWidgetShown(self.exit_dialog) then return end
+    self:finish_field()
+    self.exit_dialog = require("ui/widget/confirmbox"):new{
+        text = "退出 Suwayomi Kindle？",
+        ok_text = "退出",
+        cancel_text = "取消",
+        ok_callback = function() self:close() end,
+    }
+    UIManager:show(self.exit_dialog)
 end
 
 function Home:handleEvent(event)
@@ -146,7 +159,8 @@ function Home:page_title()
             or self.settings_route == "library" and "书架"
             or self.settings_route == "sync" and "同步"
             or self.settings_route == "theme" and "主题"
-            or self.settings_route == "browse" and "浏览"
+            or self.settings_route == "general" and "通用"
+            or self.settings_route == "browse" and "探索"
             or "设置"
     elseif self.selected_tab == "tasks" then
         return self.task_folder and (self.task_folder.title or ("漫画 " .. self.task_folder.manga)) or "下载任务"
@@ -155,7 +169,7 @@ function Home:page_title()
     elseif self.detail then
         return "漫画详情"
     elseif self.selected_tab == "browse" then
-        return self.browse.source and self.browse.source.name or "浏览"
+        return self.browse.source and self.browse.source.name or "探索"
     end
     return "书架"
 end
@@ -207,7 +221,7 @@ function Home:refresh()
         on_back = on_back,
         on_menu = actions and function() self:open_drawer() end,
         on_close = function()
-            self:close()
+            self:request_exit()
         end,
     }
     self.drawer_top = header:getSize().h
@@ -234,6 +248,8 @@ function Home:refresh()
             body = self:build_sync(screen.w, body_height)
         elseif self.settings_route == "theme" then
             body = self:build_theme_settings(screen.w, body_height)
+        elseif self.settings_route == "general" then
+            body = self:build_general_settings(screen.w, body_height)
         elseif self.settings_route == "browse" then
             body = self:build_browse_settings(screen.w, body_height)
         end

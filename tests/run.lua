@@ -88,6 +88,12 @@ local jump = assert(Pages.fetch(client,{size=2,target=3,counts=last.counts,ended
 assert(jump.remote==1 and jump.slice==3 and jump.ended and #calls==4)
 local beyond = assert(Pages.fetch(client,{size=2,target=99,counts=last.counts,ended=true}))
 assert(beyond.remote==3 and beyond.slice==2)
+local by_item = assert(Pages.fetch(client,{size=2,target=6,by_item=true}))
+assert(by_item.remote==2 and by_item.slice==1)
+by_item = assert(Pages.fetch(client,{size=2,target=9,by_item=true,counts=last.counts,ended=true}))
+assert(by_item.remote==3 and by_item.slice==2)
+local no_item, item_error = Pages.fetch(client,{size=2,target=10,by_item=true,counts=last.counts,ended=true})
+assert(not no_item and item_error == "没有这么多项目。")
 print("language selection and source pagination tests passed")
 
 local Sources = require("suwayomi_kindle/browse_sources")

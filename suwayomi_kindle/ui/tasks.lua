@@ -142,6 +142,39 @@ local function delete_selected(home,items)
     })
 end
 
+local function delete_tasks(home,items)
+    local selected=items or selection_items(home.task_selection)
+    if #selected==0 then notice("请先选择下载任务。"); return end
+    local index=home:local_index()
+    UI:show(require("ui/widget/confirmbox"):new{
+        text=string.format("删除所选 %d 个下载任务及对应的本机文件？阅读记录会保留。",#selected),
+        ok_text="删除",
+        ok_callback=function()
+            if not home.alive or home.index~=index then return end
+            local q=scheduler(home)
+            local at,tasks,files,parts,kept,failed=1,0,0,0,0,0
+            local function step()
+                local batch={}
+                for i=at,math.min(#selected,at+15) do batch[#batch+1]=selected[i] end
+                local reader=require("apps/reader/readerui").instance
+                local path=reader and reader.document and reader.document.file
+                local result,err=Queue.delete(q,batch,path)
+                if not result then notice(err); return end
+                tasks,files,parts=tasks+result.tasks,files+result.files,parts+result.parts
+                kept,failed=kept+result.kept,failed+result.failed
+                at=at+#batch
+                if at<=#selected then UI:nextTick(step); return end
+                if home.alive and home.index==index then clear_selection(home); home:refresh() end
+                local summary=string.format("已移除 %d 个任务，清理 %d 个章节文件、%d 个临时文件",tasks,files,parts)
+                if kept>0 then summary=summary .. string.format("，保留 %d 个正在阅读的文件",kept) end
+                if failed>0 then summary=summary .. string.format("，%d 个文件未能清理",failed) end
+                notice(summary)
+            end
+            step()
+        end,
+    })
+end
+
 function Page:leave_task_folder()
     self.task_page,self.task_folder=self.task_folder_page or 1,nil
     clear_selection(self)
@@ -202,6 +235,7 @@ function Page:task_actions()
                 local data=Tasks.page(self:local_index(),"queue",1,1,{filter=self.task_filter})
                 retry_selected(self,data or {})
             end}
+            actions[#actions+1]={icon="trash","删除所选",function() delete_tasks(self) end}
         else
             actions[#actions+1]={icon="close","删除所选",function() delete_selected(self) end}
         end
@@ -351,11 +385,10 @@ function Page:build_tasks(screen_width,height)
             Button.new{text=all and "取消本页" or "全选本页",width=button_w,compact=true,show_parent=self,
                 enabled=#rows>0,callback=function() select_page(self,rows) end},
             Gap:new{width=scale(6)},
-            Button.new{text=view=="queue" and "重试所选" or "删除所选",width=button_w,compact=true,
+            Button.new{text="删除所选",width=button_w,compact=true,
                 filled=selected>0,enabled=selected>0,show_parent=self,callback=function()
                     if view=="queue" then
-                        local data=Tasks.page(self:local_index(),"queue",1,1,{filter=self.task_filter})
-                        retry_selected(self,data or {})
+                        delete_tasks(self)
                     else delete_selected(self) end
                 end},
         }
@@ -366,7 +399,8 @@ function Page:build_tasks(screen_width,height)
         column[#column+1]=Text:new{width=width,text=err,face=Font:getFace("smallinfofont",16)}
     else
         self.task_page,self.task_rows=data.page,data.rows
-        self.pagination={page=data.page,total=data.pages,go=function(n) self.task_page=n; self:refresh() end}
+        self.pagination={page=data.page,total=data.pages,page_size=limit,item_count=data.count,
+            go=function(n) self.task_page=n; self:refresh() end}
         if self.pending=="scan_downloads" then
             column[#column+1]=Text:new{width=width,text="正在扫描下载目录…",face=Font:getFace("smallinfofont",16)}
             column[#column+1]=Space:new{width=scale(6)}
@@ -416,6 +450,9 @@ function Page:build_tasks(screen_width,height)
                                 UI:close(dialog)
                                 local ok,why=Queue.pause(scheduler(self),not resume,item)
                                 if not ok then notice(why) end
+                            end}},{{text="删除任务及文件",callback=function()
+                                UI:close(dialog)
+                                delete_tasks(self,{item})
                             end}}}}
                         UI:show(dialog)
                     else file_menu(self,item,label) end

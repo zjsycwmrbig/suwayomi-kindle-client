@@ -46,13 +46,14 @@ function Records.status(index,page,limit)
     return index:with_db(function(db)
         local logs = {}
         limit=limit or 1
-        local pages=math.max(1,math.ceil(tonumber(db:rowexec("SELECT count(*) FROM sync_log"))/limit))
+        local log_count=tonumber(db:rowexec("SELECT count(*) FROM sync_log"))
+        local pages=math.max(1,math.ceil(log_count/limit))
         page=math.min(page or 1,pages)
         for row in db:prepare("SELECT at,message FROM sync_log ORDER BY seq DESC LIMIT ? OFFSET ?"):bind(limit,(page-1)*limit):rows() do
             logs[#logs+1] = os.date("%m-%d %H:%M",tonumber(row[1])) .. "  " .. row[2]
         end
         local n,seq = db:rowexec("SELECT count(*),COALESCE(max(seq),0) FROM pending")
-        return {count=tonumber(n), cutoff=tonumber(seq), logs=logs, page=page, pages=pages}
+        return {count=tonumber(n), cutoff=tonumber(seq), logs=logs, log_count=log_count, page=page, pages=pages}
     end)
 end
 

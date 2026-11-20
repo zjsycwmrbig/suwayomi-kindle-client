@@ -10,26 +10,47 @@ function Pager.height()
     return Screen:scaleBySize(38)
 end
 
-local function jump(model)
+local function jump_input(model, by_item)
     local dialog
+    local maximum = by_item and model.item_count or not by_item and model.total
+    local label = by_item and "项目序号" or "页码"
     local function submit()
         local value = dialog:getInputText():match("^%s*(%d+)%s*$")
         local n = tonumber(value)
-        if not n or n < 1 or n > (model.total or 2147483647) then
-            UI:show(require("ui/widget/infomessage"):new{text = "请输入有效页码。", timeout = 2})
+        if not n or n < 1 or n > (maximum or 2147483647) then
+            UI:show(require("ui/widget/infomessage"):new{text = "请输入有效" .. label .. "。", timeout = 2})
             return
         end
         UI:close(dialog)
-        model.go(n)
+        if not by_item then model.go(n)
+        elseif model.go_item then model.go_item(n)
+        else model.go(math.ceil(n / model.page_size)) end
     end
     dialog = require("ui/widget/inputdialog"):new{
-        title = model.total and ("跳转到页（1–" .. model.total .. "）") or "跳转到页",
-        input = "", input_hint = tostring(model.page), input_type = "number", enter_callback = submit,
+        title = "输入" .. label .. (maximum and ("（1–" .. maximum .. "）") or ""),
+        input = "", input_hint = by_item and "" or tostring(model.page), input_type = "number", enter_callback = submit,
         buttons = {{{text = "取消", callback = function() UI:close(dialog) end},
             {text = "跳转", is_enter_default = true, callback = submit}}},
     }
     UI:show(dialog)
     dialog:onShowKeyboard()
+end
+
+local function jump(model)
+    if not model.go_item and (not model.page_size or not model.item_count or model.item_count == 0) then
+        return jump_input(model, false)
+    end
+    local dialog
+    local function action(label, by_item)
+        return {text=label, callback=function()
+            UI:close(dialog)
+            jump_input(model, by_item)
+        end}
+    end
+    dialog = require("ui/widget/buttondialog"):new{title="跳转",buttons={
+        {action("按页码", false), action("按项目序号", true)},
+    }}
+    UI:show(dialog)
 end
 
 function Pager.build(home, width, model)

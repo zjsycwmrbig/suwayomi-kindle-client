@@ -38,9 +38,8 @@ function Queue.start(q,resume)
         q.scheduled=false
         local started=false
         while not q.waiting and q.active < math.min(5, tonumber(q.settings.max_parallel) or 1) do
-            local job = Downloads.claim(q.index)
+            local job = Downloads.claim(q.index,Tasks.directory(q.settings.directory))
             if not job then break end
-            job.directory = Tasks.directory(q.settings.directory)
             q.active=q.active+1
             started=true
             q.jobs[job.ticket]=job
@@ -107,6 +106,24 @@ function Queue.pause(q,paused,task)
     redraw(q)
     Queue.start(q,not paused)
     return true
+end
+
+function Queue.delete(q,items,open_path)
+    local result,err=Tasks.deleteQueue(q.index,items,Tasks.directory(q.settings.directory),open_path)
+    if not result then return nil,err end
+    local removed={}
+    for _,item in ipairs(result.stopped) do removed[key(item)]=true end
+    for ticket,job in pairs(q.jobs) do
+        if removed[key(job)] then
+            q.jobs[ticket]=nil
+            q.active=q.active-1
+            if job.handle then job.handle:cancel() end
+        end
+    end
+    for _,item in ipairs(result.stopped) do Queue.notify(q,item,nil,"下载任务已删除。") end
+    Queue.start(q)
+    redraw(q)
+    return result
 end
 
 -- Re-evaluate only mangas with local files or an enabled download window.

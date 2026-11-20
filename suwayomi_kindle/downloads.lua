@@ -30,7 +30,9 @@ function Downloads.enqueue(index,manga,mode,id)
         local select
         if mode == "auto" then
             db:prepare("DELETE FROM queue WHERE manga=? AND priority=2 AND state='queued'"):bind(manga):step()
-            select = db:prepare(sql .. " AND is_read=0 ORDER BY pos LIMIT COALESCE((SELECT ahead FROM policy WHERE manga=?),0)"):bind(manga,manga)
+            select = db:prepare(sql .. [[ AND is_read=0 AND NOT EXISTS
+                (SELECT 1 FROM auto_download_excluded e WHERE e.manga=c.manga AND e.id=c.id)
+                ORDER BY pos LIMIT COALESCE((SELECT ahead FROM policy WHERE manga=?),0)]]):bind(manga,manga)
         elseif mode == "single" then
             select = db:prepare(sql .. " AND c.id=?"):bind(manga,id)
         else select = db:prepare(sql .. " ORDER BY pos"):bind(manga) end
@@ -38,7 +40,9 @@ function Downloads.enqueue(index,manga,mode,id)
             DO UPDATE SET priority=min(queue.priority,excluded.priority),
             state=CASE WHEN queue.state='failed' AND excluded.priority<2 THEN 'queued' ELSE queue.state END]])
         local count=0
+        local include = mode ~= "auto" and db:prepare("DELETE FROM auto_download_excluded WHERE manga=? AND id=?")
         for row in select:rows() do
+            if include then include:reset():bind(manga,tonumber(row[1])):step() end
             if not row[2] or lfs.attributes(row[2],"mode") ~= "file" then
                 insert:reset():bind(manga,tonumber(row[1]),priority):step()
                 count=count+1
@@ -49,7 +53,7 @@ function Downloads.enqueue(index,manga,mode,id)
     end)
 end
 
-function Downloads.claim(index)
+function Downloads.claim(index,directory)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
         local row = db:prepare([[SELECT q.manga,q.id FROM queue q JOIN chapter c ON c.manga=q.manga AND c.id=q.id
@@ -57,8 +61,10 @@ function Downloads.claim(index)
         local job
         if row then
             db:exec("UPDATE queue_control SET serial=serial+1")
-            job = {manga=row[1],id=tonumber(row[2]),ticket=tonumber(db:rowexec("SELECT serial FROM queue_control"))}
-            db:prepare("UPDATE queue SET state='active',error=NULL,pages_done=NULL,pages_total=NULL,ticket=? WHERE manga=? AND id=?"):bind(job.ticket,job.manga,job.id):step()
+            job = {manga=row[1],id=tonumber(row[2]),ticket=tonumber(db:rowexec("SELECT serial FROM queue_control")),directory=directory}
+            local path = directory and require("suwayomi_kindle/chapters").downloadPath(index,job) or nil
+            db:prepare([[UPDATE queue SET state='active',error=NULL,pages_done=NULL,pages_total=NULL,
+                ticket=?,target_path=coalesce(?,target_path) WHERE manga=? AND id=?]]):bind(job.ticket,path,job.manga,job.id):step()
         end
         db:exec("COMMIT")
         return job or false

@@ -80,7 +80,7 @@ function methods:build_settings_index(screen_width, body_height)
             },
             rule(width),
             SettingRow:new{
-                label = "浏览",
+                label = "探索",
                 value = browse_lang .. " · " .. (browse.view_mode == "grid" and "书架视图" or "列表视图"),
                 width = width,
                 callback = function() self.settings_route = "browse"; self:refresh() end,
@@ -91,6 +91,9 @@ function methods:build_settings_index(screen_width, body_height)
             rule(width),
             SettingRow:new{label = "主题", value = self.settings.theme.mode == "night" and "黑夜" or "白天", width = width,
                 callback = function() self.settings_route = "theme"; self:refresh() end},
+            rule(width),
+            SettingRow:new{label = "通用", value = self.settings.general.confirm_exit and "退出前确认" or "直接退出", width = width,
+                callback = function() self.settings_route = "general"; self:refresh() end},
             rule(width),
     }
     return self:settings_page_frame(screen_width,body_height,width,content)
@@ -167,6 +170,17 @@ local function stepper(home, width, title, options, value, change)
     })
 end
 
+function methods:build_general_settings(screen_width, body_height)
+    local width = math.min(screen_width - scale(48), scale(520))
+    local enabled = self.settings.general.confirm_exit
+    local column = Column:new{align = "left", spacing(10),
+        SettingRow:new{label = (enabled and "☑  " or "☐  ") .. "退出前确认", single_line = true, width = width,
+            callback = function() save_section(self, "general", {confirm_exit = not enabled}) end},
+        rule(width),
+    }
+    return self:settings_page_frame(screen_width, body_height, width, column)
+end
+
 function methods:build_download_settings(screen_width, body_height)
     local cfg = self.settings.download
     local width = math.min(screen_width - scale(48), scale(520))
@@ -212,7 +226,8 @@ function methods:build_language_picker(screen_width, height)
     local size = math.max(1, math.floor((height-scale(16))/row_h))
     local pages = math.ceil((#options+1)/size)
     local page = math.min(pages, self.language_page or 1)
-    self.pagination = {page = page, total = pages, go = function(n) self.language_page = n; self:refresh() end}
+    self.pagination = {page = page, total = pages, page_size = size, item_count = #options+1,
+        go = function(n) self.language_page = n; self:refresh() end}
     local column = Column:new{align = "left", spacing(8)}
     for i = (page-1)*size+1, math.min(page*size, #options+1) do
         local code = i == 1 and "all" or options[i-1]

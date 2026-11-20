@@ -16,6 +16,7 @@ local Covers = require("suwayomi_kindle/covers")
 local Records = require("suwayomi_kindle/records")
 local Downloads = require("suwayomi_kindle/downloads")
 local Queue = require("suwayomi_kindle/queue")
+local MangaStatus = require("suwayomi_kindle/manga_status")
 local Manga = {}
 
 local function scale(n) return Screen:scaleBySize(n) end
@@ -49,6 +50,7 @@ function Manga:build_detail(column,width)
     local meta = Column:new{align = "left"}
     local text_width = width-w-scale(12)
     paragraph(meta,text_width,item.title,22,true)
+    paragraph(meta,text_width,MangaStatus.label(item.status),15)
     if item.author and item.author ~= "" then paragraph(meta,text_width,item.author,16) end
     if item.source and item.source ~= "" then paragraph(meta,text_width,item.source,15) end
     if item.chapters then
@@ -268,7 +270,7 @@ function Manga:build_directory(column,width,height)
                 dimen=require("ui/geometry"):new{w=more_w,h=scale(66)},callback=function() self:chapter_actions(row) end},
         }
     end
-    self.pagination = {page=data.page,total=data.pages,go=function(n)
+    self.pagination = {page=data.page,total=data.pages,page_size=limit,item_count=data.count,go=function(n)
         dir.page,dir.target = n,nil
         self:refresh()
     end}
