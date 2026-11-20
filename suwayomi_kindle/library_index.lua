@@ -91,11 +91,11 @@ local function with_db(index, action)
                     CREATE TABLE manga_recommendations(manga TEXT PRIMARY KEY, data TEXT NOT NULL)]])
             end
             if version < 12 then
-                local has_legacy=db:prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_default'"):step()
-                local legacy=has_legacy and db:prepare("SELECT id FROM source_default WHERE id IS NOT NULL"):step()
-                if legacy then
+                local has_legacy = db:rowexec("SELECT 1 FROM sqlite_master WHERE type='table' AND name='source_default'")
+                local default_id = has_legacy and db:rowexec("SELECT id FROM source_default WHERE id IS NOT NULL LIMIT 1")
+                if default_id then
                     db:exec("UPDATE pins SET priority=priority+1")
-                    db:prepare("INSERT OR REPLACE INTO pins(id,priority) VALUES(?,1)"):bind(legacy[1]):step()
+                    db:prepare("INSERT OR REPLACE INTO pins(id,priority) VALUES(?,1)"):bind(default_id):step()
                 end
                 db:exec("DROP TABLE IF EXISTS anilist_bindings; DROP TABLE IF EXISTS source_default")
             end
