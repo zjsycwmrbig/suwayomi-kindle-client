@@ -105,39 +105,21 @@ assert(ix:refresh(function() return {rows = {}, total = 0, more = false} end).co
 assert(ix:page(2, 5).synced > 0 and ix:page(2, 5).page == 1)
 -- Pinning and cached chapters are scoped to the account and survive a shelf rebuild.
 assert(ix:setPinned("source-a",true) and ix:pins()["source-a"] and not other:pins()["source-a"])
+assert(ix:setPinned("source-b",true) and ix:pins()["source-b"] == 1 and ix:pins()["source-a"] == 2)
+assert(ix:moveSource("source-b","up") and ix:pins()["source-b"] == 1)
 assert(ix:setPinned("source-a",false) and not ix:pins()["source-a"])
 -- Source history stays local to the current server and account.
-assert(ix:setDefaultSource("source-a"))
 assert(ix:markSourceOpened("source-a") and ix:markSourceOpened("source-b") and ix:markSourceOpened("source-a"))
 local history = assert(Index.new(config, root):sourceHistory())
-assert(history.default_id == "source-a" and history.opened["source-a"] > history.opened["source-b"])
-assert(not other:sourceHistory().default_id and not next(other:sourceHistory().opened))
-assert(ix:setDefaultSource(nil) and not ix:sourceHistory().default_id)
-
-local legacy = Index.new({server_url="http://legacy.test", auth_method="none"}, root)
-assert(legacy:with_db(function(database)
-    database:exec([[DROP TABLE pins; CREATE TABLE pins(id TEXT PRIMARY KEY);
-        INSERT INTO pins VALUES('source-a'); INSERT INTO pins VALUES('source-b');
-        UPDATE source_default SET id='source-a'; DROP TABLE manga_recommendations;
-        DROP TABLE anilist_bindings; PRAGMA user_version=10]])
-    return true
-end))
-local priorities = assert(legacy:pins())
-assert(priorities["source-a"] > priorities["source-b"] and not legacy:sourceHistory().default_id)
-assert(legacy:swapSourcePriority("source-a","source-b"))
-priorities = assert(legacy:pins())
-assert(priorities["source-a"] < priorities["source-b"])
-assert(legacy:bindAniList("9",123) and legacy:saveRecommendations("9",{media=123,items={{id=124}}}))
-assert(legacy:recommendationData("9").snapshot.items[1].id == 124)
-assert(legacy:aniListBindings()["9"] == 123 and not other:recommendationData("9").snapshot)
-os.remove(legacy.path)
+assert(history.opened["source-a"] > history.opened["source-b"])
+assert(not next(other:sourceHistory().opened))
 
 local matching = require("suwayomi_kindle/recommendations")
 local recommendation = {id=123,titles={english="Kaiju No.8", native="怪獣８号"},synonyms={"怪兽8号"},authors={"Naoya Matsumoto"}}
 local requests = 0
 local source_fixture = {sourcePage=function(_, input)
     requests = requests+1
-    assert(input.search == "怪兽8号" and input.page == 1)
+    assert(input.search == "怪獣８号" and input.page == 1)
     return {mangas={
         {id="42",title="怪兽8号 RELAX",author="Naoya Matsumoto"},
         {id="43",title="怪兽 ８ 号",author="Naoya Matsumoto"},
@@ -148,13 +130,11 @@ local source_fixture = {sourcePage=function(_, input)
     }}
 end}
 local source = {id="zh",name="Chinese source",lang="zh-Hans"}
-local confirmed = { ["45"]=999 }
-local source_search = matching.search(source_fixture,source,{recommendation,recommendation},confirmed)
-assert(requests==1 and #source_search["123"].matches==2)
+local source_search = matching.search(source_fixture,source,{recommendation,recommendation})
+assert(requests==1 and #source_search["123"].matches==4)
 recommendation.sources={zh=source_search["123"]}
-local matched = matching.matches(recommendation,{source},confirmed)
-assert(matched[1].item.id=="43" and matched[1].rank==2)
-assert(matched[2].item.id=="46" and matched[2].rank==1)
+local matched = matching.matches(recommendation,{source})
+assert(matched[1].item.id=="43" and matched[2].item.id=="44" and matched[3].item.id=="45" and matched[4].item.id=="46")
 local Chapters = require("suwayomi_kindle/chapters")
 local api = {chapterPage = function(_,_,offset,limit)
     local rows = {}

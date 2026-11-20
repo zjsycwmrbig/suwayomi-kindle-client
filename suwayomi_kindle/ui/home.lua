@@ -110,7 +110,7 @@ function Home:onCloseWidget()
     self.alive = false
 end
 
-function Home:set_tab(tab_id)
+function Home:set_tab(tab_id, from_system_back)
     self:close_drawer()
     if self.selected_tab == tab_id then
         if tab_id == "settings" and self.settings_route ~= "index" then
@@ -124,7 +124,10 @@ function Home:set_tab(tab_id)
     self.detail_stack, self.recommendation_view, self.recommendation_scroll = nil, nil, nil
     self.catalog_message = nil
     self.selected_tab = tab_id
-    if tab_id == "browse" then self.browse.auto_open = true end
+    if tab_id == "browse" then
+        self.browse.auto_open = not from_system_back
+        self.source_history = nil
+    end
     if tab_id=="tasks" and self.settings.connection.server_url~="" then
         local queue=require("suwayomi_kindle/queue")
         queue.start(queue.attach(self:local_index(),self.settings.connection,self.settings.download,self))
@@ -232,8 +235,7 @@ function Home:refresh()
         or self.selected_tab ~= "settings" and (not self.detail or self.directory) and self.settings.connection.server_url ~= ""
     if self.detail and not self.directory then
         local view = self:recommendation_state()
-        local snapshot = view and view.data and view.data.snapshot
-        paginated = snapshot and #snapshot.items > self.recommendation_page_size
+        paginated = view and self:recommendation_page_count(view) > 1
     end
     self.pagination = nil
     local footer = self.detail and not self.directory and self:detail_footer(screen.w)

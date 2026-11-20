@@ -16,6 +16,7 @@ local Image = require("ui/widget/imagewidget")
 local Icons = require("suwayomi_kindle/ui/icons")
 local Paragraph = require("ui/widget/textboxwidget")
 local Button = require("suwayomi_kindle/ui/flat_button")
+local SourceControl = require("suwayomi_kindle/ui/source_control")
 local SettingRow = require("suwayomi_kindle/ui/setting_row")
 local Progress = require("suwayomi_kindle/ui/reading_progress")
 local MangaStatus = require("suwayomi_kindle/manga_status")
@@ -144,26 +145,11 @@ end
 local shelf_sorts = {
     {"opened","最近打开"},{"added","添加时间"},{"title","书名"},{"unread","未读数"},{"chapters","章节数"},
 }
-local source_sorts = {{"opened","最近打开"},{"name","源名称"},{"language","语言"}}
 
 local function pin_source(home, id, pinned)
     local ok, err = home:local_index():setPinned(id, pinned)
     if ok then home.pinned = nil else home.catalog_message = err end
     home:refresh()
-end
-
-local function source_sort_action(home)
-    return {"排序",children=function()
-        local items={}
-        for _,sort in ipairs(source_sorts) do
-            items[#items+1]={sort[2],icon=home.settings.browse.sort==sort[1] and "check" or nil,function()
-                local saved,err=home.settings_store:update("browse",{sort=sort[1]})
-                if saved then home.settings.browse,home.browse.sources_page=saved,1 else home.catalog_message=err end
-                home:refresh()
-            end}
-        end
-        return items
-    end}
 end
 
 local function shelf_actions(home,refresh)
@@ -216,14 +202,20 @@ function Catalog:catalog_actions()
         self:add_download_actions(actions)
         return actions
     elseif self.detail then
-        return {{icon="refresh","刷新详情",function() self:refresh_detail() end}}
+        local actions={{icon="refresh","刷新详情",function() self:refresh_detail() end}}
+        if self.settings.recommendation.enabled then
+            actions[#actions+1]={icon="search","查找相似漫画",function()
+                local view=self:recommendation_state()
+                if view then self:find_recommendations(view) end
+            end}
+        end
+        return actions
     end
     if self.selected_tab == "library" then
         return shelf_actions(self,{icon="refresh","从服务器刷新",function() refresh_shelf(self) end})
     end
     local b = self.browse
-    local sort = source_sort_action(self)
-    if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end},sort} end
+    if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end}} end
     return {pin,{icon = "browse", "切换漫画源", function() self:catalog_back() end},
         {icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end}}
 
@@ -425,9 +417,12 @@ local function sources(home, column, width, size)
     local pinned, history = home:source_pins(), home:source_history_data()
     local all = BrowseSources.list(home.all_sources, home.settings.browse.language, nil,
         home.settings.browse.sort, pinned, history.opened)
-    local items, positions, pin_count = {}, {}, 0
-    for position, source in ipairs(all) do
-        if pinned[source.id] then positions[source.id], pin_count = position, pin_count + 1 end
+    local items, positions, pin_count, priority = {}, {}, 0, 0
+    for _, source in ipairs(all) do
+        if pinned[source.id] then
+            priority=priority+1
+            positions[source.id], pin_count = priority, priority
+        end
         if source.name:lower():find(b.filter or "", 1, true) then items[#items+1] = source end
     end
     if #items == 0 then note(column, width, "没有符合语言和搜索条件的漫画源。"); return end
@@ -439,24 +434,23 @@ local function sources(home, column, width, size)
         local tags = {Languages.label(Languages.base(source.lang))}
         local rank = positions[source.id]
         if rank then tags[#tags+1] = rank == 1 and "默认源" or ("优先级 " .. rank) end
-        local button_width = scale(44)
-        local function move(neighbor)
-            if not neighbor then return nil end
+        local button_width = scale(42)
+        local function move(direction)
             return function()
-                local ok, err = home:local_index():swapSourcePriority(source.id, neighbor.id)
+                local ok, err = home:local_index():moveSource(source.id, direction)
                 if ok then home.pinned = nil else home.catalog_message = err end
                 home:refresh()
             end
         end
         local line = Row:new{SettingRow:new{width = width - 3*button_width, hide_chevron = true, inset = 4,
             label = source.name, value = table.concat(tags," · "), callback = function() start_source(home, source, true) end}}
-        local function control(text, fn)
-            line[#line+1] = Button.new{text=text, width=button_width, compact=true, show_parent=home,
-                enabled=fn~=nil, callback=fn}
+        local function control(icon, label, enabled, fn)
+            line[#line+1]=SourceControl:new{icon=icon,label=label,callback=fn,enabled=not not enabled}
         end
-        control(rank and "取消" or "置顶", function() pin_source(home, source.id, not rank) end)
-        control("上调", rank and rank > 1 and move(all[rank-1]) or nil)
-        control("下调", rank and rank < pin_count and move(all[rank+1]) or nil)
+        control(rank and "pin_active" or "pin",rank and "取消置顶" or "置顶",true,
+            function() pin_source(home, source.id, not rank) end)
+        control("move_up","上调",rank and rank>1,rank and rank>1 and move("up") or nil)
+        control("move_down","下调",rank and rank<pin_count,rank and rank<pin_count and move("down") or nil)
         column[#column+1] = line
     end
 end

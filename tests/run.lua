@@ -100,10 +100,9 @@ local Sources = require("suwayomi_kindle/browse_sources")
 local source_list = {{id="p",name="Zulu",lang="zh-Hant"},{id="n",name="Beta",lang="zh"},
     {id="a",name="alpha",lang="zh"},{id="e",name="English",lang="en"}}
 local opened = {p=1,a=2,n=3,e=4,removed=5}
-local history = {default_id="a",opened=opened}
-equal(Sources.landing(source_list,"zh",history).id,"a")
-history.default_id = "removed"
+local history = {opened=opened}
 equal(Sources.landing(source_list,"zh",history).id,"n")
+equal(Sources.landing(source_list,"zh",history,{n=1}).id,"n")
 equal(Sources.landing(source_list,"all",history).id,"e")
 equal(Sources.landing(source_list,"ja",history),nil)
 equal(Sources.landing(source_list,"zh",{opened={}}),nil)

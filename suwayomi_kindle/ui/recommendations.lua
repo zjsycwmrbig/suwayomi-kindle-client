@@ -14,19 +14,6 @@ local function note(column, width, text, size)
     column[#column+1] = Text:new{text=text, width=width, face=Font:getFace("smallinfofont",size or 15)}
 end
 
-local function choose(title, items)
-    local dialog
-    local buttons = {}
-    for _, item in ipairs(items) do
-        buttons[#buttons+1] = {{text=item[1], callback=function()
-            UI:close(dialog)
-            item[2]()
-        end}}
-    end
-    dialog = require("ui/widget/buttondialog"):new{title=title,buttons=buttons}
-    UI:show(dialog)
-end
-
 function View:recommendation_state()
     local manga = self.detail and self.detail.id
     if not manga or not self.settings.recommendation.enabled then return end
@@ -87,7 +74,7 @@ function View:match_recommendation_page(view, items, force)
             if #batch>0 then
                 active=active+1
                 jobs[source.id] = Worker.start(UI,home.settings.connection,"recommendation_source",{
-                    source=source, items=batch, bindings=view.bindings,
+                    source=source, items=batch,
                 },function(result)
                     if not current() then return end
                     active=active-1
@@ -118,7 +105,6 @@ function View:match_recommendation_page(view, items, force)
         end
         advance()
     end
-    view.bindings=index:aniListBindings() or {}
     refresh()
     if self.all_sources then begin(self.all_sources); return end
     jobs.sources=Worker.start(UI,self.settings.connection,"sources",{language="all"},function(data,err)
@@ -136,8 +122,8 @@ local function collect_page(view, items)
     return visible
 end
 
-function View:find_recommendations(view, keyword, identify)
-    if view.busy or self.pending or not view.data then return end
+function View:find_recommendations(view)
+    if view.busy or self.pending then return end
     local index = self:local_index()
     local function perform(action, params, done)
         local jobs = {}
@@ -166,142 +152,92 @@ function View:find_recommendations(view, keyword, identify)
             self:match_recommendation_page(view,collect_page(view,snapshot.items),true)
         end)
     end
-    if view.data.media and not identify then fetch(view.data.media); return end
-    perform("anilist_identify",{title=keyword or self.detail.title},function(items)
+    if view.data.snapshot then fetch(view.data.media or view.data.snapshot.media); return end
+    local title=require("suwayomi_kindle/config").trim(self.detail.title)
+    perform("anilist_identify",{title=title},function(items)
         if #items==0 then view.error="AniList 未找到对应作品。"; return end
-        local actions = {}
-        for _, item in ipairs(items) do
-            local alt = item.titles.native or item.titles.romaji
-            local label = alt and alt~=item.title and (item.title .. " · " .. alt) or item.title
-            if item.authors[1] then label = label .. " · " .. item.authors[1] end
-            actions[#actions+1] = {label,function()
-                local ok, err=index:bindAniList(view.manga,item.id)
-                if ok then view.data.media=item.id; fetch(item.id)
-                else view.error=err; self:refresh() end
-            end}
-        end
-        choose("选择 AniList 作品",actions)
+        view.data.media=items[1].id
+        fetch(items[1].id)
     end)
 end
 
-function View:recommendation_title_search(view)
-    local dialog
-    local function submit()
-        local keyword = require("suwayomi_kindle/config").trim(dialog:getInputText())
-        if keyword=="" then return end
-        UI:close(dialog)
-        self:find_recommendations(view,keyword,true)
-    end
-    dialog=require("ui/widget/inputdialog"):new{title="AniList 作品名",input=self.detail.title,
-        enter_callback=submit,buttons={{{text="取消",callback=function() UI:close(dialog) end},
-        {text="搜索",is_enter_default=true,callback=submit}}}}
-    UI:show(dialog)
-    dialog:onShowKeyboard()
+function View:open_recommended(view,candidate)
+    self.detail_stack=self.detail_stack or {}
+    self.detail_stack[#self.detail_stack+1]={item=self.detail,view=view}
+    self:cancel_recommendations()
+    self.recommendation_view=nil
+    self:open_detail(candidate)
 end
 
-function View:open_recommendation_sources(view, recommendation, rows)
-    if #rows==0 then self:match_recommendation_page(view,{recommendation},true); return end
-    local actions = {}
-    for _, row in ipairs(rows) do
-        local candidate = row.item
-        local label = candidate.source .. " · " .. candidate.title .. (row.rank==1 and "（待确认）" or "")
-        actions[#actions+1] = {label,function()
-            local function open()
-                self.detail_stack=self.detail_stack or {}
-                self.detail_stack[#self.detail_stack+1]={item=self.detail,view=view}
-                self:cancel_recommendations()
-                self.recommendation_view=nil
-                self:open_detail(candidate)
-            end
-            if row.rank==3 then open(); return end
-            UI:show(require("ui/widget/confirmbox"):new{
-                text="将《" .. candidate.title .. "》与 AniList 的《" .. recommendation.title .. "》绑定？",
-                ok_text="确认并打开",cancel_text="取消",ok_callback=function()
-                    local ok,err=self:local_index():bindAniList(candidate.id,recommendation.id)
-                    if ok then view.bindings[tostring(candidate.id)]=recommendation.id; open()
-                    else view.error=err; self:refresh() end
-                end,
-                other_buttons={{{text="仅打开",callback=open}}},
-            })
-        end}
-    end
-    choose(recommendation.title,actions)
-end
-
-local function displayed_items(home, view, items)
-    local sources = home.all_sources and ordered_sources(home, home.all_sources)
-    local pins = home:source_pins()
-    local matched, remaining, status = {}, {}, {}
-    for _, item in ipairs(items) do
-        local available = sources
-        if not available then
-            available = {}
-            for id in pairs(item.sources or {}) do available[#available+1]={id=id} end
-            table.sort(available,function(a,b)
-                local x,y=pins[a.id] or 0,pins[b.id] or 0
-                if x~=y then return x>y end
+local function collect_results(home, view)
+    local available = home.all_sources and ordered_sources(home,home.all_sources)
+    local pins, results, seen = home:source_pins(), {}, {}
+    local snapshot=view and view.data and view.data.snapshot
+    for order, item in ipairs(snapshot and snapshot.items or {}) do
+        local sources=available
+        if not sources then
+            sources={}
+            for id in pairs(item.sources or {}) do sources[#sources+1]={id=id} end
+            table.sort(sources,function(a,b)
+                local pa,pb=pins[a.id] or 0,pins[b.id] or 0
+                if (pa>0)~=(pb>0) then return pa>0 end
+                if pa~=pb then return pa<pb end
                 return a.id<b.id
             end)
         end
-        local rows, checked, failed = Recommendations.matches(item,available,view.bindings)
-        status[item.id]={rows=rows, checked=checked, failed=failed}
-        local group = #rows>0 and matched or remaining
-        group[#group+1] = item
+        local rows=Recommendations.matches(item,sources)
+        for _,row in ipairs(rows) do
+            local candidate=row.item
+            local dedupe=candidate.source_id..":"..candidate.id
+            if not seen[dedupe] then
+                seen[dedupe]=true
+                results[#results+1]={candidate=candidate,source_position=row.position,recommendation_order=order}
+            end
+        end
     end
-    if view.busy then return items, status end
-    for _, item in ipairs(remaining) do matched[#matched+1] = item end
-    return matched, status
+    table.sort(results,function(a,b)
+        if a.candidate.in_library~=b.candidate.in_library then return a.candidate.in_library end
+        if a.source_position~=b.source_position then return a.source_position<b.source_position end
+        if a.recommendation_order~=b.recommendation_order then return a.recommendation_order<b.recommendation_order end
+        return a.candidate.id<b.candidate.id
+    end)
+    return results
 end
 
 function View:build_recommendations(column, width)
     local view=self:recommendation_state()
     if not view then return end
-    note(column,width,"相似漫画 · AniList",17)
     if not view.data then note(column,width,view.error or "无法读取推荐缓存。"); return end
     local snapshot=view.data.snapshot
-    local control=Row:new{}
-    local function add(text, callback, enabled)
-        control[#control+1]=Button.new{text=text,callback=callback,enabled=enabled,compact=true,
-            width=math.floor(width/2),show_parent=self}
-    end
-    add(snapshot and "刷新推荐" or "查找相似漫画",function() self:find_recommendations(view) end,not view.busy and not self.pending)
-    add(view.busy and "取消查询" or "搜索作品名",function()
-        if view.busy then self:cancel_recommendations(); self.recommendation_scroll=true; self:refresh()
-        else self:recommendation_title_search(view) end
-    end,not self.pending)
-    column[#column+1]=control
+    if not snapshot and not view.busy and not view.error then return end
+    note(column,width,"相似漫画 · AniList",17)
     if view.busy then note(column,width,view.busy) end
     if view.error then note(column,width,view.error) end
     if not snapshot then return end
-    local count=#snapshot.items
-    if count==0 then note(column,width,"暂无相似漫画。"); return end
-    view.bindings=view.bindings or self:local_index():aniListBindings() or {}
-    local ordered, status = displayed_items(self,view,snapshot.items)
-    local items=collect_page(view,ordered)
-    for _, item in ipairs(items) do
-        local entry = status[item.id]
-        local rows, checked, failed = entry.rows, entry.checked, entry.failed
-        local distinct={}
-        for _, row in ipairs(rows) do distinct[row.item.source_id]=true end
-        local found=0
-        for _ in pairs(distinct) do found=found+1 end
-        local value = found>0 and (found .. " 个来源") or
-            (checked==0 and "未匹配来源" or failed==checked and "源查询失败" or "已查来源未命中")
-        if failed>0 and (failed~=checked or found>0) then value=value .. " · 部分源失败" end
-        local all_pending = found==0 and view.busy
-        local title = rows[1] and rows[1].item.title or item.title
-        column[#column+1]=SettingRow:new{width=width,inset=4,row_height=62,label=title,value=value,
-            callback=not all_pending and function() self:open_recommendation_sources(view,item,rows) end or nil}
+    local results=collect_results(self,view)
+    if #results==0 then
+        note(column,width,view.busy and "正在搜索可读漫画…" or view.error or "暂未找到可读的推荐漫画。")
+        return
     end
-    if not view.busy then
-        column[#column+1]=Button.new{text="匹配本页来源",width=width,compact=true,show_parent=self,
-            callback=function() self:match_recommendation_page(view,items,true) end}
+    local items=collect_page(view,results)
+    for _,result in ipairs(items) do
+        local candidate=result.candidate
+        local value=candidate.source
+        if candidate.author and candidate.author~="" then value=value.." · "..candidate.author end
+        if candidate.chapters then value=value.." · "..candidate.chapters.." 章" end
+        column[#column+1]=SettingRow:new{width=width,inset=4,row_height=62,label=candidate.title,value=value,
+            callback=function() self:open_recommended(view,candidate) end}
     end
+    local count=#results
     self.pagination={page=view.page,total=math.ceil(count/page_size),page_size=page_size,item_count=count,busy=view.busy~=nil,go=function(page)
         view.page=page
         self.recommendation_scroll=true
         self:refresh()
     end}
+end
+
+function View:recommendation_page_count(view)
+    return math.max(1,math.ceil(#collect_results(self,view)/page_size))
 end
 
 return View
