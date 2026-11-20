@@ -434,10 +434,10 @@ function Page:build_tasks(screen_width,height)
                 if item.error and item.error~="" then value=value .. " · " .. item.error end
             end
             if self.task_editing then label=(selected and "☑  " or "☐  ") .. label end
-            local folder_link=item.state=="folder" and not self.task_editing
-            local arrow_width=folder_link and scale(52) or 0
-            local row=SettingRow:new{width=width-arrow_width,label=label,value=value,
-                hide_chevron=folder_link or self.task_editing,
+            local folder_actions=item.state=="folder" and not self.task_editing
+            local menu_width=folder_actions and scale(52) or 0
+            local row=SettingRow:new{width=width-menu_width,label=label,value=value,
+                hide_chevron=folder_actions or self.task_editing,
                 leading=selected and Icons.widget("check",scale(18)) or item.state=="folder" and Icons.widget("folder",scale(23)) or nil,
                 callback=function()
                     if self.task_editing then toggle_selection(self,item)
@@ -455,13 +455,14 @@ function Page:build_tasks(screen_width,height)
                                 delete_tasks(self,{item})
                             end}}}}
                         UI:show(dialog)
+                    elseif folder_actions then enter_folder(self,item)
                     else file_menu(self,item,label) end
                 end}
-            if folder_link then
-                local arrow=require("suwayomi_kindle/ui/header").IconButton:new{icon_name="chevron_right",
-                    dimen=require("ui/geometry"):new{w=arrow_width,h=row:getSize().h},
-                    callback=function() enter_folder(self,item) end}
-                row=Row:new{row,arrow}
+            if folder_actions then
+                local menu=require("suwayomi_kindle/ui/header").IconButton:new{icon_name="menu",
+                    dimen=require("ui/geometry"):new{w=menu_width,h=row:getSize().h},
+                    callback=function() file_menu(self,item,label) end}
+                row=Row:new{row,menu}
             end
             column[#column+1]=row
         end

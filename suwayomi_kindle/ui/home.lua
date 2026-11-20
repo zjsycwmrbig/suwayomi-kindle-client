@@ -33,7 +33,7 @@ local Home = InputContainer:extend{
 local TAB_ITEMS = {
     { id = "library", label = "书架", icon = "library" },
     { id = "browse", label = "探索", icon = "browse" },
-    { id = "tasks", label = "下载任务", icon = "download" },
+    { id = "tasks", label = "下载", icon = "download" },
     { id = "settings", label = "设置", icon = "settings" },
 }
 
