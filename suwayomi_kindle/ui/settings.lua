@@ -213,7 +213,29 @@ function methods:build_browse_settings(screen_width, body_height)
                 if not self.all_sources and self.settings.connection.server_url ~= "" then self:fetch_sources()
                 else self:refresh() end
             end},
-        rule(width), view_line(self, "browse", width), rule(width)}
+        rule(width), view_line(self, "browse", width), rule(width),
+        SettingRow:new{label = "推荐", width = width,
+            value = self.settings.recommendation.enabled and "AniList" or "已关闭",
+            callback = function() self.settings_route = "recommendation"; self:refresh() end},
+        rule(width)}
+    return self:settings_page_frame(screen_width, body_height, width, column)
+end
+
+function methods:build_recommendation_settings(screen_width, body_height)
+    local width = math.min(screen_width - scale(48), scale(520))
+    local config = self.settings.recommendation
+    local column = Column:new{align = "left", spacing(10),
+        SettingRow:new{label = (config.enabled and "☑  " or "☐  ") .. "显示相似漫画", single_line = true,
+            width = width, callback = function()
+                save_section(self, "recommendation", {enabled = not config.enabled})
+            end},
+        rule(width),
+        stepper(self, width, "推荐前几部", {{5,"5"},{10,"10"},{15,"15"},{20,"20"},{25,"25"}}, config.limit,
+            function(value) save_section(self, "recommendation", {limit = value}) end),
+        rule(width),
+        stepper(self, width, "优先搜索源数", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"}}, config.sources,
+            function(value) save_section(self, "recommendation", {sources = value}) end),
+        rule(width)}
     return self:settings_page_frame(screen_width, body_height, width, column)
 end
 
@@ -344,7 +366,7 @@ function methods:onCloseDialog()
     elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
         self:catalog_back()
     elseif self.selected_tab == "settings" and self.settings_route ~= "index" then
-        self.settings_route = self.settings_route == "languages" and "browse" or "index"
+        self.settings_route = (self.settings_route == "languages" or self.settings_route == "recommendation") and "browse" or "index"
         self:refresh()
     else
         self:close()

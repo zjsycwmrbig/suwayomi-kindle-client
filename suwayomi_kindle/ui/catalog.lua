@@ -32,6 +32,7 @@ function Catalog:reset_browse()
 end
 
 function Catalog:cancel_catalog()
+    self:cancel_recommendations()
     if self.pending == "sources" and not self.all_sources then self.browse.requested = false end
     if self.pending == "library" then self.shelf_requested = false end
     if self.job then self.job:cancel() end
@@ -45,6 +46,7 @@ function Catalog:reset_catalog()
     self:reset_browse()
     self.all_sources, self.pinned, self.source_history, self.directory = nil, nil, nil, nil
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
+    self.detail_stack, self.recommendation_view, self.recommendation_scroll = nil, nil, nil
     self.shelf_page, self.index, self.shelf_search = 1, nil, nil
     self.task_page,self.task_view,self.task_message=1,"queue",nil
     self.task_filter,self.task_file_scope,self.task_folder="all","managed",nil
@@ -66,7 +68,10 @@ function Catalog:catalog_back()
     if self.directory then
         self.directory = nil
     elseif self.detail then
-        self.detail = nil
+        local previous = self.detail_stack and table.remove(self.detail_stack)
+        self.detail = previous and previous.item or nil
+        self.recommendation_view = previous and previous.view or nil
+        if previous then self.recommendation_scroll = true end
     else
         self.browse.source, self.browse.results = nil, nil
         self.browse.auto_open = false
@@ -141,6 +146,12 @@ local shelf_sorts = {
 }
 local source_sorts = {{"opened","最近打开"},{"name","源名称"},{"language","语言"}}
 
+local function pin_source(home, id, pinned)
+    local ok, err = home:local_index():setPinned(id, pinned)
+    if ok then home.pinned = nil else home.catalog_message = err end
+    home:refresh()
+end
+
 local function source_sort_action(home)
     return {"排序",children=function()
         local items={}
@@ -177,21 +188,11 @@ function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
     if self.selected_tab == "tasks" then return self:task_actions() end
     local source = not self.detail and self.selected_tab == "browse" and self.browse.source
-    local pin, default
+    local pin
     if source then
-        local pinned = self:source_pins()[source.id] == true
+        local pinned = self:source_pins()[source.id]
         pin = {icon="library",pinned and "取消置顶" or "置顶此源",function()
-            local ok,err = self:local_index():setPinned(source.id,not pinned)
-            if ok then self.pinned = nil else self.catalog_message = err end
-            self:refresh()
-        end}
-        local is_default = self:source_history_data().default_id == source.id
-        default = {icon="check",is_default and "取消默认源" or "设为默认源",function()
-            local id
-            if not is_default then id = source.id end
-            local ok,err = self:local_index():setDefaultSource(id)
-            if ok then self.source_history = nil else self.catalog_message = err end
-            self:refresh()
+            pin_source(self, source.id, not pinned)
         end}
     end
     if self.pending then
@@ -202,7 +203,7 @@ function Catalog:catalog_actions()
             self:refresh()
         end}
         if self.pending=="library" then return shelf_actions(self,cancel) end
-        return {cancel,pin,default}
+        return {cancel,pin}
     end
     if self.directory then
         local actions = {{icon="refresh","刷新章节",function() self:refresh_directory(true) end},
@@ -223,7 +224,7 @@ function Catalog:catalog_actions()
     local b = self.browse
     local sort = source_sort_action(self)
     if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end},sort} end
-    return {pin,default,{icon = "browse", "切换漫画源", function() self:catalog_back() end},
+    return {pin,{icon = "browse", "切换漫画源", function() self:catalog_back() end},
         {icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end}}
 
 end
@@ -304,7 +305,8 @@ local function restore_browse_source(home)
     local b = home.browse
     if not b.auto_open or not home.all_sources or home.pending then return end
     b.auto_open = false
-    local source = BrowseSources.landing(home.all_sources, home.settings.browse.language, home:source_history_data())
+    local source = BrowseSources.landing(home.all_sources, home.settings.browse.language, home:source_history_data(),
+        home:source_pins())
     if source and (not b.source or b.source.id ~= source.id or not b.results) then
         defer(home, function()
             if home.browse == b and home.selected_tab == "browse" then start_source(home, source, false) end
@@ -421,8 +423,13 @@ local function sources(home, column, width, size)
     end
     if not home.all_sources then return end
     local pinned, history = home:source_pins(), home:source_history_data()
-    local items = BrowseSources.list(home.all_sources,home.settings.browse.language,b.filter,
-        home.settings.browse.sort,pinned,history.opened)
+    local all = BrowseSources.list(home.all_sources, home.settings.browse.language, nil,
+        home.settings.browse.sort, pinned, history.opened)
+    local items, positions, pin_count = {}, {}, 0
+    for position, source in ipairs(all) do
+        if pinned[source.id] then positions[source.id], pin_count = position, pin_count + 1 end
+        if source.name:lower():find(b.filter or "", 1, true) then items[#items+1] = source end
+    end
     if #items == 0 then note(column, width, "没有符合语言和搜索条件的漫画源。"); return end
     local visible, page, pages = slice(items, b.sources_page, size)
     b.sources_page = page
@@ -430,10 +437,27 @@ local function sources(home, column, width, size)
         go = function(n) b.sources_page = n; home:refresh() end}
     for _, source in ipairs(visible) do
         local tags = {Languages.label(Languages.base(source.lang))}
-        if source.id == history.default_id then tags[#tags+1] = "默认源" end
-        if pinned[source.id] then tags[#tags+1] = "已置顶" end
-        column[#column+1] = SettingRow:new{width = width, label = source.name, value = table.concat(tags," · "),
-            callback = function() start_source(home, source, true) end}
+        local rank = positions[source.id]
+        if rank then tags[#tags+1] = rank == 1 and "默认源" or ("优先级 " .. rank) end
+        local button_width = scale(44)
+        local function move(neighbor)
+            if not neighbor then return nil end
+            return function()
+                local ok, err = home:local_index():swapSourcePriority(source.id, neighbor.id)
+                if ok then home.pinned = nil else home.catalog_message = err end
+                home:refresh()
+            end
+        end
+        local line = Row:new{SettingRow:new{width = width - 3*button_width, hide_chevron = true, inset = 4,
+            label = source.name, value = table.concat(tags," · "), callback = function() start_source(home, source, true) end}}
+        local function control(text, fn)
+            line[#line+1] = Button.new{text=text, width=button_width, compact=true, show_parent=home,
+                enabled=fn~=nil, callback=fn}
+        end
+        control(rank and "取消" or "置顶", function() pin_source(home, source.id, not rank) end)
+        control("上调", rank and rank > 1 and move(all[rank-1]) or nil)
+        control("下调", rank and rank < pin_count and move(all[rank+1]) or nil)
+        column[#column+1] = line
     end
 end
 
@@ -536,6 +560,11 @@ function Catalog:build_catalog(screen_width, height)
         self.input_form.viewport, self.input_form.height = viewport, height
     end
     self.cropping_widget = viewport
+    if self.recommendation_scroll and self.detail and not self.directory then
+        self.recommendation_scroll = nil
+        viewport:initState()
+        if viewport._is_scrollable then viewport:scrollToRatio(nil, 1) end
+    end
     return Frame:new{width = screen_width, height = height, padding = 0, bordersize = 0,
         padding_left = inset, viewport}
 end

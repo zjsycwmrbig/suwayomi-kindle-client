@@ -28,6 +28,14 @@ local function find(widget, key, value)
     end
 end
 
+local function parent_of(widget,element)
+    for _,child in ipairs(widget) do
+        if child==element then return widget end
+        local parent=parent_of(child,element)
+        if parent then return parent end
+    end
+end
+
 local function check_footer()
     home:paintTo(device.screen.bb, 0, 0)
     local nav = home[1][1][2]:contentRange()
@@ -152,9 +160,9 @@ local function complete_source_page()
     for i=1,18 do items[i]={id=tostring(700+i),title="浏览漫画 "..i,author="浏览作者",chapters=12,in_library=true,status="ONGOING"} end
     finish_request({results={mangas=items},remote=1,slice=1,counts={#items},ended=true})
 end
-home.all_sources,home.source_history = nil,nil
+home.all_sources,home.source_history,home.pinned = nil,nil,nil
 assert(home.index:markSourceOpened("b"))
-assert(home.index:setDefaultSource("a"))
+assert(home.index:setPinned("a",true))
 home.settings.browse.view_mode="grid"
 home:set_tab("browse")
 run_deferred()
@@ -179,7 +187,7 @@ local input = UI:getTopmostVisibleWidget()
 input:setInputText("1")
 input.enter_callback()
 assert(home.pagination.page==1 and find(home,"title","浏览漫画 1"))
-find(open(),"label","取消默认源").callback()
+find(open(),"label","取消置顶").callback()
 find(open(),"label","切换漫画源").callback()
 home:refresh()
 run_deferred()
@@ -195,15 +203,71 @@ run_deferred()
 assert(last_request.input.source.id=="b")
 complete_source_page()
 assert(find(home,"label","浏览漫画 1") and find(home,"text","连载中 · 12 章 · 已入书架"))
-find(open(),"label","设为默认源").callback()
-assert(home.index:sourceHistory().default_id=="b")
 find(open(),"label","切换漫画源").callback()
+local function source_control(name, action)
+    local row = assert(parent_of(home,assert(find(home,"label",name))))
+    assert(find(row,"text",action)).callback()
+end
+source_control("源 B","置顶")
+source_control("源 A","置顶")
+assert(home:source_pins().a > home:source_pins().b)
+source_control("源 A","下调")
+assert(home:source_pins().b > home:source_pins().a)
+source_control("源 A","上调")
+assert(home:source_pins().a > home:source_pins().b)
+source_control("源 B","上调")
+assert(home:source_pins().b > home:source_pins().a)
 find(home,"label","源 A").callback()
 assert(last_request.input.source.id=="a")
 local source_history=assert(home.index:sourceHistory())
-assert(source_history.default_id=="b" and source_history.opened.a>source_history.opened.b)
-worker.start = worker_start
+assert(source_history.opened.a>source_history.opened.b)
 home:set_tab("library")
+home:set_tab("browse")
+run_deferred()
+assert(last_request.input.source.id=="b")
+complete_source_page()
+
+home:set_tab("library")
+home.detail={id="84",title="原漫画",description="原作简介"}
+home:refresh()
+assert(last_request.action=="source_seek") -- Merely opening the detail page does not look up recommendations.
+assert(find(home,"text","相似漫画 · AniList") and not home.pagination)
+find(home,"text","查找相似漫画").callback()
+assert(last_request.action=="anilist_identify")
+finish_request({{id=90,title="原漫画",titles={},synonyms={},authors={}}})
+find(UI:getTopmostVisibleWidget(),"text","原漫画").callback()
+assert(last_request.action=="anilist_recommend" and last_request.input.id==90)
+assert(last_request.input.limit==5)
+local recommendation_items={}
+for i=1,5 do recommendation_items[i]={id=100+i,title="相似漫画 "..i,titles={},synonyms={},authors={}} end
+local pending_sources={}
+worker.start=function(_,_,action,input,done)
+    if action=="recommendation_source" then
+        pending_sources[#pending_sources+1]={source=input.source.id,done=done}
+        assert(#input.items==3)
+    elseif action~="covers" then last_request,finish_request={action=action,input=input},done end
+    return {cancel=function() end}
+end
+finish_request({media=90,items=recommendation_items})
+assert(#pending_sources==2 and pending_sources[1].source=="b" and pending_sources[2].source=="a")
+pending_sources[1].done({["101"]={matches={{id="584",title="相似漫画 1",source="源 B",source_id="b",certainty=1}}}})
+pending_sources[2].done(nil,"超时")
+run_deferred()
+assert(home.pagination.total==2 and find(home,"text","1 个来源 · 部分源失败"))
+home.pagination.go(2)
+assert(find(home,"label","相似漫画 5") and #pending_sources==2)
+home.pagination.go(1)
+find(home,"label","相似漫画 1").callback()
+find(UI:getTopmostVisibleWidget(),"text","源 B · 相似漫画 1（待确认）").callback()
+find(UI:getTopmostVisibleWidget(),"text","确认并打开").callback()
+assert(home.detail.id=="584" and home.index:recommendationData("584").media==101)
+home:catalog_back()
+assert(home.detail.id=="84" and home.pagination.page==1)
+home.recommendation_view=nil
+home:refresh()
+assert(home.pagination.total==2 and find(home,"label","相似漫画 1"))
+home:catalog_back()
+worker.start = worker_start
 
 home.detail = {id="41",title="测试漫画",source="测试源",description="简介内容",chapters=32,in_library=true,status="ON_HIATUS"}
 local chapters = require("suwayomi_kindle/chapters")
@@ -245,13 +309,6 @@ find(menu,"label","删除策略").callback()
 find(menu,"label","保留 5 章").callback()
 assert(downloads.policy(home.index,"41").retention=="5")
 local first=find(home,"label","第1话")
-local function parent_of(widget,element)
-    for _,child in ipairs(widget) do
-        if child==element then return widget end
-        local parent=parent_of(child,element)
-        if parent then return parent end
-    end
-end
 local row=assert(parent_of(home,first))
 assert(row[2].icon_name=="download" and row[3].icon_name=="chevron_right")
 row[3].callback()

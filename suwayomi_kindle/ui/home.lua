@@ -41,7 +41,7 @@ function Home:init()
     self.dimen = Screen:getSize()
     self.covers_fullscreen = true
     self.settings = {}
-    for _, section in ipairs({"connection", "download", "library", "browse", "theme", "general"}) do
+    for _, section in ipairs({"connection", "download", "library", "browse", "theme", "general", "recommendation"}) do
         self.settings[section] = self.settings_store:load(section)
     end
     self.previous_night_mode = Screen.night_mode == true
@@ -121,6 +121,7 @@ function Home:set_tab(tab_id)
     end
     self:cancel_catalog()
     self.detail, self.directory,self.reader_origin = nil, nil,nil
+    self.detail_stack, self.recommendation_view, self.recommendation_scroll = nil, nil, nil
     self.catalog_message = nil
     self.selected_tab = tab_id
     if tab_id == "browse" then self.browse.auto_open = true end
@@ -161,6 +162,7 @@ function Home:page_title()
             or self.settings_route == "theme" and "主题"
             or self.settings_route == "general" and "通用"
             or self.settings_route == "browse" and "探索"
+            or self.settings_route == "recommendation" and "推荐"
             or "设置"
     elseif self.selected_tab == "tasks" then
         return self.task_folder and (self.task_folder.title or ("漫画 " .. self.task_folder.manga)) or "下载任务"
@@ -195,7 +197,7 @@ function Home:refresh()
     local on_back
     if self.selected_tab == "settings" and self.settings_route ~= "index" then
         on_back = function()
-            self.settings_route = self.settings_route == "languages" and "browse" or "index"
+            self.settings_route = (self.settings_route == "languages" or self.settings_route == "recommendation") and "browse" or "index"
             self:refresh()
         end
     elseif self.selected_tab=="tasks" and self.task_folder then
@@ -228,6 +230,11 @@ function Home:refresh()
     self.drawer_height = main_height - self.drawer_top
     local paginated = self.selected_tab == "settings" and (self.settings_route == "languages" or self.settings_route == "sync")
         or self.selected_tab ~= "settings" and (not self.detail or self.directory) and self.settings.connection.server_url ~= ""
+    if self.detail and not self.directory then
+        local view = self:recommendation_state()
+        local snapshot = view and view.data and view.data.snapshot
+        paginated = snapshot and #snapshot.items > self.recommendation_page_size
+    end
     self.pagination = nil
     local footer = self.detail and not self.directory and self:detail_footer(screen.w)
     local body_height = main_height - header:getSize().h
@@ -252,6 +259,8 @@ function Home:refresh()
             body = self:build_general_settings(screen.w, body_height)
         elseif self.settings_route == "browse" then
             body = self:build_browse_settings(screen.w, body_height)
+        elseif self.settings_route == "recommendation" then
+            body = self:build_recommendation_settings(screen.w, body_height)
         end
     elseif self.selected_tab == "tasks" then
         body = self:build_tasks(screen.w,body_height)
@@ -303,6 +312,8 @@ for name, method in pairs(require("suwayomi_kindle/ui/catalog")) do
 end
 
 for name, method in pairs(require("suwayomi_kindle/ui/manga")) do Home[name] = method end
+
+for name, method in pairs(require("suwayomi_kindle/ui/recommendations")) do Home[name] = method end
 
 for name, method in pairs(require("suwayomi_kindle/ui/sync")) do Home[name] = method end
 

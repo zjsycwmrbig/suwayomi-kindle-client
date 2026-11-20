@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 10 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 11 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -86,7 +86,18 @@ local function with_db(index, action)
             if version < 10 then
                 db:exec("ALTER TABLE manga ADD COLUMN status TEXT; UPDATE shelf SET synced=0")
             end
-            db:exec("PRAGMA user_version=10; COMMIT")
+            if version < 11 then
+                db:exec([[ALTER TABLE pins ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+                    UPDATE pins SET priority=rowid;
+                    INSERT INTO pins(id,priority) SELECT id,(SELECT coalesce(max(priority),0)+1 FROM pins)
+                        FROM source_default WHERE id IS NOT NULL AND true
+                        ON CONFLICT(id) DO UPDATE SET priority=excluded.priority;
+                    UPDATE source_default SET id=NULL;
+                    CREATE TABLE anilist_bindings(manga TEXT PRIMARY KEY, media INTEGER NOT NULL);
+                    CREATE INDEX anilist_media ON anilist_bindings(media);
+                    CREATE TABLE manga_recommendations(manga TEXT PRIMARY KEY, data TEXT NOT NULL)]])
+            end
+            db:exec("PRAGMA user_version=11; COMMIT")
         end
         return action(db)
     end)
@@ -207,15 +218,68 @@ end
 function Index:pins()
     return with_db(self, function(db)
         local result = {}
-        for row in db:prepare("SELECT id FROM pins"):rows() do result[row[1]] = true end
+        for row in db:prepare("SELECT id,priority FROM pins"):rows() do result[row[1]] = tonumber(row[2]) end
         return result
     end)
 end
 
 function Index:setPinned(id, pinned)
     return with_db(self, function(db)
-        db:prepare(pinned and "INSERT OR IGNORE INTO pins VALUES(?)" or "DELETE FROM pins WHERE id=?"):bind(id):step()
+        if pinned then
+            db:prepare([[INSERT INTO pins(id,priority) SELECT ?,coalesce(max(priority),0)+1 FROM pins
+                WHERE true ON CONFLICT(id) DO UPDATE SET priority=excluded.priority]]):bind(id):step()
+        else db:prepare("DELETE FROM pins WHERE id=?"):bind(id):step() end
         return true
+    end)
+end
+
+function Index:swapSourcePriority(id, neighbor)
+    return with_db(self, function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local read = db:prepare("SELECT priority FROM pins WHERE id=?")
+        local first = read:bind(id):step()
+        local second = read:reset():bind(neighbor):step()
+        if first and second then
+            local update = db:prepare("UPDATE pins SET priority=? WHERE id=?")
+            update:bind(second[1], id):step()
+            update:reset():bind(first[1], neighbor):step()
+        end
+        db:exec("COMMIT")
+        return true
+    end)
+end
+
+function Index:recommendationData(id)
+    return with_db(self, function(db)
+        local row = db:prepare("SELECT data FROM manga_recommendations WHERE manga=?"):bind(id):step()
+        local binding = db:prepare("SELECT media FROM anilist_bindings WHERE manga=?"):bind(id):step()
+        local data = row and require("dkjson").decode(row[1])
+        return {snapshot = type(data)=="table" and data or nil, media = binding and tonumber(binding[1])}
+    end)
+end
+
+function Index:saveRecommendations(id, snapshot)
+    return with_db(self, function(db)
+        db:prepare("INSERT OR REPLACE INTO manga_recommendations VALUES(?,?)")
+            :bind(id,require("dkjson").encode(snapshot)):step()
+        return true
+    end)
+end
+
+function Index:bindAniList(id, media)
+    return with_db(self, function(db)
+        db:prepare("INSERT OR REPLACE INTO anilist_bindings VALUES(?,?)"):bind(id,media):step()
+        return true
+    end)
+end
+
+function Index:aniListBindings()
+    return with_db(self, function(db)
+        local result = {}
+        for row in db:prepare("SELECT manga,media FROM anilist_bindings"):rows() do
+            result[row[1]]=tonumber(row[2])
+        end
+        return result
     end)
 end
 

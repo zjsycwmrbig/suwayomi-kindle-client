@@ -113,6 +113,48 @@ local history = assert(Index.new(config, root):sourceHistory())
 assert(history.default_id == "source-a" and history.opened["source-a"] > history.opened["source-b"])
 assert(not other:sourceHistory().default_id and not next(other:sourceHistory().opened))
 assert(ix:setDefaultSource(nil) and not ix:sourceHistory().default_id)
+
+local legacy = Index.new({server_url="http://legacy.test", auth_method="none"}, root)
+assert(legacy:with_db(function(database)
+    database:exec([[DROP TABLE pins; CREATE TABLE pins(id TEXT PRIMARY KEY);
+        INSERT INTO pins VALUES('source-a'); INSERT INTO pins VALUES('source-b');
+        UPDATE source_default SET id='source-a'; DROP TABLE manga_recommendations;
+        DROP TABLE anilist_bindings; PRAGMA user_version=10]])
+    return true
+end))
+local priorities = assert(legacy:pins())
+assert(priorities["source-a"] > priorities["source-b"] and not legacy:sourceHistory().default_id)
+assert(legacy:swapSourcePriority("source-a","source-b"))
+priorities = assert(legacy:pins())
+assert(priorities["source-a"] < priorities["source-b"])
+assert(legacy:bindAniList("9",123) and legacy:saveRecommendations("9",{media=123,items={{id=124}}}))
+assert(legacy:recommendationData("9").snapshot.items[1].id == 124)
+assert(legacy:aniListBindings()["9"] == 123 and not other:recommendationData("9").snapshot)
+os.remove(legacy.path)
+
+local matching = require("suwayomi_kindle/recommendations")
+local recommendation = {id=123,titles={english="Kaiju No.8", native="怪獣８号"},synonyms={"怪兽8号"},authors={"Naoya Matsumoto"}}
+local requests = 0
+local source_fixture = {sourcePage=function(_, input)
+    requests = requests+1
+    assert(input.search == "怪兽8号" and input.page == 1)
+    return {mangas={
+        {id="42",title="怪兽8号 RELAX",author="Naoya Matsumoto"},
+        {id="43",title="怪兽 ８ 号",author="Naoya Matsumoto"},
+        {id="43",title="怪兽 ８ 号",author="Naoya Matsumoto"},
+        {id="44",title="怪兽8号",author="Other Author"},
+        {id="45",title="怪兽8号",author="Naoya Matsumoto"},
+        {id="46",title="怪兽8号"},
+    }}
+end}
+local source = {id="zh",name="Chinese source",lang="zh-Hans"}
+local confirmed = { ["45"]=999 }
+local source_search = matching.search(source_fixture,source,{recommendation,recommendation},confirmed)
+assert(requests==1 and #source_search["123"].matches==2)
+recommendation.sources={zh=source_search["123"]}
+local matched = matching.matches(recommendation,{source},confirmed)
+assert(matched[1].item.id=="43" and matched[1].rank==2)
+assert(matched[2].item.id=="46" and matched[2].rank==1)
 local Chapters = require("suwayomi_kindle/chapters")
 local api = {chapterPage = function(_,_,offset,limit)
     local rows = {}

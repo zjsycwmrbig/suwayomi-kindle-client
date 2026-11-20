@@ -5,16 +5,23 @@ local function matches_language(source, selected)
     return selected.all or selected[Languages.base(source.lang)]
 end
 
-function Sources.landing(sources, language, history)
+local function priority(pinned, id)
+    return tonumber(pinned[id]) or (pinned[id] and 1 or 0)
+end
+
+function Sources.landing(sources, language, history, pinned)
     local selected, latest, order = Languages.set(language), nil, 0
+    local top, rank, legacy = nil, 0, nil
     for _, source in ipairs(sources) do
         if matches_language(source, selected) then
-            if source.id == history.default_id then return source end
+            if source.id == history.default_id then legacy = source end
+            local weight = priority(pinned or {}, source.id)
+            if weight > rank then top, rank = source, weight end
             local opened = history.opened[source.id] or 0
             if opened > order then latest, order = source, opened end
         end
     end
-    return latest
+    return top or legacy or latest
 end
 
 function Sources.list(sources, language, filter, sort, pinned, opened)
@@ -25,7 +32,8 @@ function Sources.list(sources, language, filter, sort, pinned, opened)
         end
     end
     table.sort(rows, function(a, b)
-        if pinned[a.id] ~= pinned[b.id] then return pinned[a.id] == true end
+        local pa, pb = priority(pinned, a.id), priority(pinned, b.id)
+        if pa ~= pb then return pa > pb end
         if sort == "opened" then
             local x, y = opened[a.id] or 0, opened[b.id] or 0
             if x ~= y then return x > y end
