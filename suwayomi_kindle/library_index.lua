@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 7 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 8 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -74,7 +74,12 @@ local function with_db(index, action)
                     CREATE INDEX shelf_chapters ON manga(chapters DESC,title COLLATE NOCASE,id);
                     UPDATE shelf SET synced=0;]])
             end
-            db:exec("PRAGMA user_version=7; COMMIT")
+            if version < 8 then
+                db:exec([[CREATE TABLE source_opened(id TEXT PRIMARY KEY, opened INTEGER NOT NULL);
+                    CREATE TABLE source_default(id TEXT);
+                    INSERT INTO source_default VALUES(NULL)]])
+            end
+            db:exec("PRAGMA user_version=8; COMMIT")
         end
         return action(db)
     end)
@@ -201,6 +206,32 @@ end
 function Index:setPinned(id, pinned)
     return with_db(self, function(db)
         db:prepare(pinned and "INSERT OR IGNORE INTO pins VALUES(?)" or "DELETE FROM pins WHERE id=?"):bind(id):step()
+        return true
+    end)
+end
+
+function Index:sourceHistory()
+    return with_db(self, function(db)
+        db:exec("BEGIN")
+        local history = {default_id = db:rowexec("SELECT id FROM source_default"), opened = {}}
+        for row in db:prepare("SELECT id,opened FROM source_opened"):rows() do
+            history.opened[row[1]] = tonumber(row[2])
+        end
+        return history
+    end)
+end
+
+function Index:setDefaultSource(id)
+    return with_db(self, function(db)
+        db:prepare("UPDATE source_default SET id=?"):bind(id):step()
+        return true
+    end)
+end
+
+function Index:markSourceOpened(id)
+    return with_db(self, function(db)
+        db:prepare([[INSERT OR REPLACE INTO source_opened(id,opened)
+            SELECT ?,coalesce(max(opened),0)+1 FROM source_opened]]):bind(id):step()
         return true
     end)
 end

@@ -73,7 +73,8 @@ open()
 UI:sendEvent(Event:new("CloseDialog"))
 assert(not home.drawer)
 
-home.all_sources = {{name = "测试源", lang = "zh"}}
+home.all_sources = {{id="test",name = "测试源", lang = "zh"}}
+home.index.sourceHistory = function() return {opened={}} end
 home:set_tab("browse")
 assert(check_footer() == y)
 home:set_tab("settings")
@@ -131,6 +132,67 @@ find(home,"text","搜索").callback()
 assert(find(home,"label","封面测试"))
 find(open(),"label","退出书架搜索").callback()
 assert(not home.shelf_search)
+
+local mock_sources = {{id="a",name="源 A",lang="zh"},{id="b",name="源 B",lang="zh",latest=true}}
+local worker = require("suwayomi_kindle/worker")
+local worker_start = worker.start
+local last_request, finish_request
+worker.start = function(_,_,action,input,done)
+    if action ~= "covers" then last_request, finish_request = {action=action,input=input}, done end
+    return {cancel=function() end}
+end
+local function run_deferred()
+    UI:_checkTasks()
+end
+local function complete_source_page()
+    assert(last_request.action == "source_seek")
+    local items = {}
+    for i=1,18 do items[i]={id=tostring(700+i),title="浏览漫画 "..i,author="浏览作者",chapters=12,in_library=true} end
+    finish_request({results={mangas=items},remote=1,slice=1,counts={#items},ended=true})
+end
+home.all_sources,home.source_history = nil,nil
+assert(home.index:markSourceOpened("b"))
+assert(home.index:setDefaultSource("a"))
+home.settings.browse.view_mode="grid"
+home:set_tab("browse")
+run_deferred()
+assert(last_request.action == "sources")
+finish_request({sources=mock_sources})
+run_deferred()
+assert(last_request.input.source.id == "a")
+complete_source_page()
+local browse_tile=assert(find(home,"title","浏览漫画 1"))
+assert(browse_tile.poster_height>device.screen:scaleBySize(114) and find(browse_tile,"text","浏览作者"))
+assert(home.cropping_widget[1]:getSize().h <= home.cropping_widget.dimen.h)
+assert(home.pagination.page==1 and home.pagination.total>1)
+home.pagination.go(2)
+assert(home.pagination.page==2 and not find(home,"title","浏览漫画 1"))
+find(open(),"label","取消默认源").callback()
+find(open(),"label","切换漫画源").callback()
+home:refresh()
+run_deferred()
+assert(not home.browse.source and find(home,"label","源 B"))
+local source_menu=open()
+find(source_menu,"label","排序").callback()
+find(source_menu,"label","源名称").callback()
+assert(store:load("browse").sort=="name")
+home.settings.browse.view_mode="list"
+home:set_tab("library")
+home:set_tab("browse")
+run_deferred()
+assert(last_request.input.source.id=="b")
+complete_source_page()
+assert(find(home,"label","浏览漫画 1") and find(home,"text","12 章 · 已入书架"))
+find(open(),"label","设为默认源").callback()
+assert(home.index:sourceHistory().default_id=="b")
+find(open(),"label","切换漫画源").callback()
+find(home,"label","源 A").callback()
+assert(last_request.input.source.id=="a")
+local source_history=assert(home.index:sourceHistory())
+assert(source_history.default_id=="b" and source_history.opened.a>source_history.opened.b)
+worker.start = worker_start
+home:set_tab("library")
+
 home.detail = {id="41",title="测试漫画",source="测试源",description="简介内容",chapters=32,in_library=true}
 local chapters = require("suwayomi_kindle/chapters")
 assert(chapters.refresh(home.index,{chapterPage=function()

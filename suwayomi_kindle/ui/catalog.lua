@@ -10,6 +10,7 @@ local Column = require("ui/widget/verticalgroup")
 local Space = require("ui/widget/verticalspan")
 local Pages = require("suwayomi_kindle/source_pages")
 local Languages = require("suwayomi_kindle/languages")
+local BrowseSources = require("suwayomi_kindle/browse_sources")
 local InputText = require("ui/widget/inputtext")
 local Image = require("ui/widget/imagewidget")
 local Icons = require("suwayomi_kindle/ui/icons")
@@ -26,7 +27,7 @@ local Catalog = {}
 local function scale(n) return Screen:scaleBySize(n) end
 
 function Catalog:reset_browse()
-    self.browse = {sources_page = 1, mode = "POPULAR", page = 1, slice = 1}
+    self.browse = {sources_page = 1, mode = "POPULAR", page = 1, slice = 1, auto_open = true}
 end
 
 function Catalog:cancel_catalog()
@@ -41,7 +42,7 @@ end
 function Catalog:reset_catalog()
     self:cancel_catalog()
     self:reset_browse()
-    self.all_sources, self.pinned, self.directory = nil, nil, nil
+    self.all_sources, self.pinned, self.source_history, self.directory = nil, nil, nil, nil
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
     self.shelf_page, self.index, self.shelf_search = 1, nil, nil
     self.task_page,self.task_view,self.task_message=1,"queue",nil
@@ -67,6 +68,7 @@ function Catalog:catalog_back()
         self.detail = nil
     else
         self.browse.source, self.browse.results = nil, nil
+        self.browse.auto_open = false
     end
     self:refresh()
 end
@@ -117,17 +119,40 @@ local function fetch_page(home, mode, search, size, target, reset)
     end)
 end
 
-local function start_source(home, source)
+local function start_source(home, source, manual)
     local b = home.browse
+    b.auto_open = false
+    local err
+    if manual then
+        local saved
+        saved, err = home:local_index():markSourceOpened(source.id)
+        if saved then home.source_history = nil end
+    end
     b.source, b.results, b.counts, b.ended = source, nil, {}, false
     b.mode, b.page, b.slice, b.search, b.query = "POPULAR", 1, 1, nil, ""
     home:refresh()
     fetch_page(home, "POPULAR", nil, home.catalog_size, 1, true)
+    if err then UI:show(require("ui/widget/infomessage"):new{text=err,timeout=3}) end
 end
 
 local shelf_sorts = {
     {"opened","最近打开"},{"added","添加时间"},{"title","书名"},{"unread","未读数"},{"chapters","章节数"},
 }
+local source_sorts = {{"opened","最近打开"},{"name","源名称"},{"language","语言"}}
+
+local function source_sort_action(home)
+    return {"排序",children=function()
+        local items={}
+        for _,sort in ipairs(source_sorts) do
+            items[#items+1]={sort[2],icon=home.settings.browse.sort==sort[1] and "check" or nil,function()
+                local saved,err=home.settings_store:update("browse",{sort=sort[1]})
+                if saved then home.settings.browse,home.browse.sources_page=saved,1 else home.catalog_message=err end
+                home:refresh()
+            end}
+        end
+        return items
+    end}
+end
 
 local function shelf_actions(home,refresh)
     return {refresh,{icon="search",home.shelf_search and "退出书架搜索" or "搜索书架",function()
@@ -151,12 +176,20 @@ function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
     if self.selected_tab == "tasks" then return self:task_actions() end
     local source = not self.detail and self.selected_tab == "browse" and self.browse.source
-    local pin
+    local pin, default
     if source then
         local pinned = self:source_pins()[source.id] == true
         pin = {icon="library",pinned and "取消置顶" or "置顶此源",function()
             local ok,err = self:local_index():setPinned(source.id,not pinned)
             if ok then self.pinned = nil else self.catalog_message = err end
+            self:refresh()
+        end}
+        local is_default = self:source_history_data().default_id == source.id
+        default = {icon="check",is_default and "取消默认源" or "设为默认源",function()
+            local id
+            if not is_default then id = source.id end
+            local ok,err = self:local_index():setDefaultSource(id)
+            if ok then self.source_history = nil else self.catalog_message = err end
             self:refresh()
         end}
     end
@@ -168,7 +201,7 @@ function Catalog:catalog_actions()
             self:refresh()
         end}
         if self.pending=="library" then return shelf_actions(self,cancel) end
-        return {cancel,pin}
+        return {cancel,pin,default}
     end
     if self.directory then
         local actions = {{icon="refresh","刷新章节",function() self:refresh_directory(true) end},
@@ -187,8 +220,10 @@ function Catalog:catalog_actions()
         return shelf_actions(self,{icon="refresh","从服务器刷新",function() refresh_shelf(self) end})
     end
     local b = self.browse
-    if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end}} end
-    return {pin,{icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end}}
+    local sort = source_sort_action(self)
+    if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end},sort} end
+    return {pin,default,{icon = "browse", "切换漫画源", function() self:catalog_back() end},
+        {icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end}}
 
 end
 
@@ -200,6 +235,11 @@ end
 function Catalog:source_pins()
     if not self.pinned then self.pinned = self:local_index():pins() or {} end
     return self.pinned
+end
+
+function Catalog:source_history_data()
+    if not self.source_history then self.source_history = self:local_index():sourceHistory() or {opened={}} end
+    return self.source_history
 end
 
 -- The same inline field searches installed sources or the selected source.
@@ -259,6 +299,18 @@ local function defer(home, task)
     end)
 end
 
+local function restore_browse_source(home)
+    local b = home.browse
+    if not b.auto_open or not home.all_sources or home.pending then return end
+    b.auto_open = false
+    local source = BrowseSources.landing(home.all_sources, home.settings.browse.language, home:source_history_data())
+    if source and (not b.source or b.source.id ~= source.id or not b.results) then
+        defer(home, function()
+            if home.browse == b and home.selected_tab == "browse" then start_source(home, source, false) end
+        end)
+    end
+end
+
 local function load_posters(home, items)
     local ids, missing = {}, false
     for _, item in ipairs(items) do
@@ -280,7 +332,7 @@ local function load_posters(home, items)
     end)
 end
 
-local function manga_list(home, column, width, items, grid)
+local function manga_list(home, column, width, items, grid, poster_height)
     local tiles
     for i, item in ipairs(items) do
         local function open()
@@ -300,30 +352,33 @@ local function manga_list(home, column, width, items, grid)
             if shelf then
                 subtitle = item.author and item.author:match("%S") and item.author or "作者未知"
                 badge, short_badge = require("suwayomi_kindle/progress").badge(item.chapters, item.unread)
+            elseif item.author and item.author:match("%S") then
+                subtitle = item.author
             end
             tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = subtitle,
                 badge = badge, short_badge = short_badge,
-                poster_height = home.shelf_poster_height, path = Covers.path(home.settings.connection, item), callback = open, hold_callback = continue}
+                poster_height = poster_height, path = Covers.path(home.settings.connection, item), callback = open, hold_callback = continue}
         else
             local path = Covers.path(home.settings.connection, item)
             local poster = path and Image:new{original_in_nightmode = true, file = path,
-                width = scale(shelf and 46 or 40), height = scale(shelf and 65 or 56)}
+                width = scale(46), height = scale(65)}
                 or Icons.widget("library", scale(28))
             local credits = {}
-            for _,key in ipairs({"author","source"}) do
+            for _,key in ipairs(shelf and {"author","source"} or {"author"}) do
                 if item[key] and item[key] ~= "" then credits[#credits+1] = item[key] end
             end
             if shelf then chapters = chapters .. " · " .. (item.downloaded or 0) .. " 已下载" end
+            if not shelf and item.in_library then chapters = chapters .. " · 已入书架" end
             column[#column + 1] = SettingRow:new{label = item.title, value = chapters,
                 detail_line = #credits > 0 and table.concat(credits," · ") or nil,
                 leading = poster, trailing=shelf and Progress.new(item.chapters,item.unread) or nil, hide_chevron=shelf, width = width, inset=4, leading_width=56, callback = open, hold_callback=continue,
-                row_height=shelf and 72 or 66}
+                row_height=72}
         end
     end
     load_posters(home, items)
 end
 
-local function library(home, column, width, size, grid)
+local function library(home, column, width, size, grid, poster_height)
     home.index = home.index or Index.new(home.settings.connection)
     local search=home.shelf_search
     if search then
@@ -345,7 +400,7 @@ local function library(home, column, width, size, grid)
     end
     local pages = math.ceil(data.count / size)
     note(column, width, data.count .. " 部漫画")
-    manga_list(home, column, width, data.items, grid)
+    manga_list(home, column, width, data.items, grid, poster_height)
     home.pagination = {page = data.page, total = pages, go = function(n)
         home.shelf_page = n
         home:refresh()
@@ -363,35 +418,35 @@ local function sources(home, column, width, size)
         defer(home, function() home:fetch_sources() end)
     end
     if not home.all_sources then return end
-    local items = {}
-    local pinned, regular = home:source_pins(), {}
-    local selected = Languages.set(home.settings.browse.language)
-    for _, source in ipairs(home.all_sources) do
-        if (selected.all or selected[Languages.base(source.lang)])
-            and (source.name:lower():find(b.filter or "", 1, true)) then
-            local group = pinned[source.id] and items or regular
-            group[#group+1] = source
-        end
-    end
-    for _,source in ipairs(regular) do items[#items+1] = source end
+    local pinned, history = home:source_pins(), home:source_history_data()
+    local items = BrowseSources.list(home.all_sources,home.settings.browse.language,b.filter,
+        home.settings.browse.sort,pinned,history.opened)
     if #items == 0 then note(column, width, "没有符合语言和搜索条件的漫画源。"); return end
     local visible, page, pages = slice(items, b.sources_page, size)
+    b.sources_page = page
     home.pagination = {page = page, total = pages, go = function(n) b.sources_page = n; home:refresh() end}
     for _, source in ipairs(visible) do
-        column[#column+1] = SettingRow:new{width = width, label = source.name, value = (pinned[source.id] and "已置顶 · " or "") .. source.lang,
-            callback = function() start_source(home, source) end}
+        local tags = {Languages.label(Languages.base(source.lang))}
+        if source.id == history.default_id then tags[#tags+1] = "默认源" end
+        if pinned[source.id] then tags[#tags+1] = "已置顶" end
+        column[#column+1] = SettingRow:new{width = width, label = source.name, value = table.concat(tags," · "),
+            callback = function() start_source(home, source, true) end}
     end
 end
 
-local function source_manga(home, column, width, size, grid)
+local function source_controls(home, column, width)
     local b = home.browse
     buttons(home,column,width,{
-        {"热门",function() fetch_page(home,"POPULAR",nil,size,1,true) end,b.mode=="POPULAR"},
-        {"最新",b.source.latest and function() fetch_page(home,"LATEST",nil,size,1,true) end or nil,b.mode=="LATEST"},
+        {"热门",function() fetch_page(home,"POPULAR",nil,home.catalog_size,1,true) end,b.mode=="POPULAR"},
+        {"最新",b.source.latest and function() fetch_page(home,"LATEST",nil,home.catalog_size,1,true) end or nil,b.mode=="LATEST"},
     })
     search_bar(home, column, width, true, function(query)
-        fetch_page(home, query ~= "" and "SEARCH" or "POPULAR", query ~= "" and query or nil, size, 1, true)
+        fetch_page(home, query ~= "" and "SEARCH" or "POPULAR", query ~= "" and query or nil, home.catalog_size, 1, true)
     end)
+end
+
+local function source_manga(home, column, width, size, grid, poster_height)
+    local b = home.browse
     if not b.results then return end
     local items, part, parts = slice(b.results.mangas, b.slice, size)
     b.slice = part
@@ -405,37 +460,46 @@ local function source_manga(home, column, width, size, grid)
             fetch_page(home, b.mode, b.search, size, n, false)
         end
     end}
-    if b.mode == "SEARCH" then note(column,width,"搜索 · " .. b.search) end
     if #items == 0 then note(column, width, "没有找到漫画。") end
-    manga_list(home, column, width, items, grid)
+    manga_list(home, column, width, items, grid, poster_height)
+end
+
+local function grid_layout(width, available, captions)
+    local ideal = math.floor((width / 3 - scale(10)) / 0.71)
+    captions = scale(captions or 54)
+    local rows = math.max(1, math.floor(available / (ideal + captions) + 0.5))
+    return rows * 3, math.max(1, math.min(ideal, math.floor(available / rows) - captions))
 end
 
 function Catalog:build_catalog(screen_width, height)
-    local width = screen_width - scale(48)
-    local column = Column:new{align = "left", Space:new{width = scale(12)}}
-    local grid = self.settings[self.selected_tab].view_mode == "grid"
-    local size = grid and 3 * math.max(1, math.floor((height - scale(100)) / scale(172)))
-        or math.max(1, math.floor((height - scale(100)) / scale(66)))
-    if self.browse.source and self.selected_tab == "browse" and not self.detail then
-        size = grid and 3 * math.max(1,math.floor((height-scale(132))/scale(172)))
-            or math.max(1,math.floor((height-scale(132))/scale(66)))
+    local browsing = self.selected_tab == "browse" and not self.detail
+    local browsing_results = browsing and self.browse.source
+    local inset = scale(browsing_results and 12 or 24)
+    local width = screen_width - inset * 2
+    local column = Column:new{align = "left", Space:new{width = scale(browsing_results and 6 or 12)}}
+    if not self.directory then
+        local loading = self.pending and not (browsing_results and self.browse.results)
+        note(column, width, loading and "正在从服务器获取数据…" or self.catalog_message)
     end
-    self.shelf_poster_height = nil
-    if self.selected_tab == "library" and not self.detail then
+    local grid = self.settings[self.selected_tab].view_mode == "grid"
+    local size, poster_height = math.max(1, math.floor((height - scale(56)) / scale(66)))
+    if browsing_results then
+        source_controls(self, column, width)
+        local used = 0
+        for _, widget in ipairs(column) do used = used + widget:getSize().h end
+        local available = height - used
+        if grid then size, poster_height = grid_layout(width, available, 68)
+        else size = math.max(1, math.floor(available / scale(72))) end
+    elseif self.selected_tab == "library" and not self.detail then
         local available = height - scale((self.pending or self.catalog_message) and 76 or 46)
         if self.shelf_search then available=available-scale(44) end
         if grid then
-            local ideal = math.floor((width / 3 - scale(10)) / 0.71)
-            local captions = scale(54)
-            local rows = math.max(1, math.floor(available / (ideal + captions) + 0.5))
-            self.shelf_poster_height = math.max(1,math.min(ideal,math.floor(available / rows) - captions))
-            size = rows * 3
+            size, poster_height = grid_layout(width, available)
         else
             size = math.max(1,math.floor(available / scale(72)))
         end
     end
     self.catalog_size = size
-    if not self.directory then note(column, width, self.pending and "正在从服务器获取数据…" or self.catalog_message) end
     if self.settings.connection.server_url == "" then
         note(column, width, "先设置 Suwayomi 服务器地址。")
         buttons(self, column, width, {{"前往连接设置", function()
@@ -446,9 +510,12 @@ function Catalog:build_catalog(screen_width, height)
     elseif self.detail then
         self:build_detail(column,width)
         load_posters(self,{self.detail})
-    elseif self.selected_tab == "library" then library(self, column, width, size, grid)
-    elseif self.browse.source then source_manga(self, column, width, size, grid)
-    else sources(self, column, width, math.max(1, math.floor((height - scale(100)) / scale(66)))) end
+    elseif self.selected_tab == "library" then library(self, column, width, size, grid, poster_height)
+    else
+        restore_browse_source(self)
+        if browsing_results then source_manga(self, column, width, size, grid, poster_height)
+        else sources(self, column, width, size) end
+    end
     local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = height},
         show_parent = self, column}
     if self.input_form then
@@ -456,7 +523,7 @@ function Catalog:build_catalog(screen_width, height)
     end
     self.cropping_widget = viewport
     return Frame:new{width = screen_width, height = height, padding = 0, bordersize = 0,
-        padding_left = scale(24), viewport}
+        padding_left = inset, viewport}
 end
 
 return Catalog

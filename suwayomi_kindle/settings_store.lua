@@ -13,7 +13,7 @@ local defaults = {
     theme = {mode = "day"},
     download = {directory = "", max_parallel = 1, retention = "1"},
     library = {view_mode = "list", sort = "title"},
-    browse = {view_mode = "list", language = "zh"},
+    browse = {view_mode = "list", language = "zh", sort = "opened"},
 }
 
 local function fingerprint(settings)

@@ -93,6 +93,13 @@ assert(ix:page(2, 5).synced > 0 and ix:page(2, 5).page == 1)
 -- Pinning and cached chapters are scoped to the account and survive a shelf rebuild.
 assert(ix:setPinned("source-a",true) and ix:pins()["source-a"] and not other:pins()["source-a"])
 assert(ix:setPinned("source-a",false) and not ix:pins()["source-a"])
+-- Source history stays local to the current server and account.
+assert(ix:setDefaultSource("source-a"))
+assert(ix:markSourceOpened("source-a") and ix:markSourceOpened("source-b") and ix:markSourceOpened("source-a"))
+local history = assert(Index.new(config, root):sourceHistory())
+assert(history.default_id == "source-a" and history.opened["source-a"] > history.opened["source-b"])
+assert(not other:sourceHistory().default_id and not next(other:sourceHistory().opened))
+assert(ix:setDefaultSource(nil) and not ix:sourceHistory().default_id)
 local Chapters = require("suwayomi_kindle/chapters")
 local api = {chapterPage = function(_,_,offset,limit)
     local rows = {}

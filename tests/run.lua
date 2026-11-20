@@ -89,3 +89,25 @@ assert(jump.remote==1 and jump.slice==3 and jump.ended and #calls==4)
 local beyond = assert(Pages.fetch(client,{size=2,target=99,counts=last.counts,ended=true}))
 assert(beyond.remote==3 and beyond.slice==2)
 print("language selection and source pagination tests passed")
+
+local Sources = require("suwayomi_kindle/browse_sources")
+local source_list = {{id="p",name="Zulu",lang="zh-Hant"},{id="n",name="Beta",lang="zh"},
+    {id="a",name="alpha",lang="zh"},{id="e",name="English",lang="en"}}
+local opened = {p=1,a=2,n=3,e=4,removed=5}
+local history = {default_id="a",opened=opened}
+equal(Sources.landing(source_list,"zh",history).id,"a")
+history.default_id = "removed"
+equal(Sources.landing(source_list,"zh",history).id,"n")
+equal(Sources.landing(source_list,"all",history).id,"e")
+equal(Sources.landing(source_list,"ja",history),nil)
+equal(Sources.landing(source_list,"zh",{opened={}}),nil)
+local function order(language,filter,sort)
+    local ids = {}
+    for i,source in ipairs(Sources.list(source_list,language,filter,sort,{p=true},opened)) do ids[i] = source.id end
+    return table.concat(ids,",")
+end
+equal(order("zh","","opened"),"p,n,a")
+equal(order("zh","","name"),"p,a,n")
+equal(order("all","","language"),"p,e,a,n")
+equal(order("all","ta","opened"),"n")
+print("default source, language filtering, and source sort tests passed")

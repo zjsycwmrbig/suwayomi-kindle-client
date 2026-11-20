@@ -110,6 +110,7 @@ function Home:set_tab(tab_id)
     self.detail, self.directory,self.reader_origin = nil, nil,nil
     self.catalog_message = nil
     self.selected_tab = tab_id
+    if tab_id == "browse" then self.browse.auto_open = true end
     if tab_id=="tasks" and self.settings.connection.server_url~="" then
         local queue=require("suwayomi_kindle/queue")
         queue.start(queue.attach(self:local_index(),self.settings.connection,self.settings.download,self))
