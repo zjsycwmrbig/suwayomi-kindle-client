@@ -34,6 +34,7 @@ function Worker.run(config, action, input)
         return {added = true, warning = not saved and "已加入服务器书架，请重新拉取本地书架。" or nil}
     elseif action == "detail" then
         local item, failure = client:manga(input.id)
+        if not failure then item, failure = client:with_tracker_id(item) end
         if item then Chapters.saveDescription(Index.new(config),item) end
         return item, failure
     elseif action == "membership" then

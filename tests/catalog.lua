@@ -37,9 +37,16 @@ local function status_query(request)
     assert(request.query:find(" status ", 1, true) and not request.query:find("fetchChapters", 1, true))
 end
 local shelf_api = mock([[{"data":{"mangas":{"totalCount":2,"nodes":[{"id":9,"title":"Book","status":"COMPLETED"},
-    {"id":10,"title":"Other"}],"pageInfo":{"hasNextPage":false}}}}]], status_query)
-local detail_api = mock([[{"data":{"manga":{"id":9,"title":"Book","status":"ON_HIATUS","initialized":true}}}]], status_query)
-assert(detail_api:manga("9").status == "ON_HIATUS")
+    {"id":10,"title":"Other","trackRecords":{"nodes":[{"remoteId":"120760","tracker":{"name":"AniList"}}]}}],
+    "pageInfo":{"hasNextPage":false}}}}]], status_query)
+local detail_api = mock([[{"data":{"manga":{"id":9,"title":"Book","status":"ON_HIATUS","initialized":true,
+    "trackRecords":{"nodes":[{"remoteId":"42","tracker":{"name":"AniList"}}]}}}}]], status_query)
+local detail = assert(detail_api:manga("9"))
+assert(detail.status == "ON_HIATUS" and detail.anilist_id == 42)
+local tracker_api = mock([[{"data":{"manga":{"id":11,"trackRecords":{"nodes":[
+    {"remoteId":"120760","tracker":{"name":"AniList"}}]}}}}]])
+local tracked = assert(tracker_api:with_tracker_id({id="11"}))
+assert(tracked.anilist_id == 120760)
 
 local root = os.tmpname()
 os.remove(root)
@@ -57,6 +64,9 @@ assert(migrated.count == 1 and migrated.synced == 0 and migrated.items[1].chapte
 assert(ix:refresh(function(offset, limit) return shelf_api:libraryPage(offset, limit) end))
 local status_page = assert(ix:page(1, 5))
 assert(status_page.items[1].status == "COMPLETED" and status_page.items[2].status == "UNKNOWN")
+assert(status_page.items[2].anilist_id == 120760)
+assert(ix:upsert({id="10",title="Other",author="",source="Source",thumbnail="",chapters=0,unread=0,anilist_id=nil}))
+assert(ix:page(1,5).items[2].anilist_id == 120760)
 assert(ix:with_db(function(db) return tonumber(db:rowexec("SELECT count(*) FROM directories")) == 0 end))
 local function manga(n)
     return {id = tostring(n), title = string.format("Book %05d", n), source = "Source", author = "", thumbnail = "", added = 1700000000+n, chapters = n, unread = 0}

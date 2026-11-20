@@ -370,9 +370,12 @@ assert(store:load("recommendation").search_languages=="zh,ja,en")
 source_controls("move_up")[3]:onTapControl()
 assert(store:load("recommendation").search_languages=="zh,en,ja")
 home:set_tab("library")
+home.index:upsert({id="88",title="自动搜索测试",author="",source="测试源",thumbnail="",
+    chapters=1,unread=1,added=os.time()})
 home:open_detail({id="88",title="自动搜索测试"})
 assert(last_request.action=="detail")
 finish_request({anilist_id=789})
+assert(home:local_index():page(1,20,"title","自动搜索测试").items[1].anilist_id==789)
 assert(last_request.action=="anilist_recommend" and last_request.input.id==789)
 home:catalog_back()
 home.settings.recommendation.auto_search=false

@@ -44,6 +44,11 @@ function Manga:refresh_detail(on_open)
     end
     self:request_catalog("detail",{id=item.id},function(data)
         for key,value in pairs(data) do item[key] = value end
+        local saved = require("suwayomi_kindle/library_index").new(self.settings.connection)
+        saved:with_db(function(db)
+            db:prepare("UPDATE manga SET anilist_id=? WHERE id=?"):bind(data.anilist_id,item.id):step()
+            return true
+        end)
         auto_search()
     end, auto_search)
 end

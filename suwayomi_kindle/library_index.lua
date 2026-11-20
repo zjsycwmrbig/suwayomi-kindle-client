@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 12 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 13 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -99,7 +99,10 @@ local function with_db(index, action)
                 end
                 db:exec("DROP TABLE IF EXISTS anilist_bindings; DROP TABLE IF EXISTS source_default")
             end
-            db:exec("PRAGMA user_version=12; COMMIT")
+            if version < 13 then
+                db:exec("ALTER TABLE manga ADD COLUMN anilist_id INTEGER")
+            end
+            db:exec("PRAGMA user_version=13; COMMIT")
         end
         return action(db)
     end)
@@ -111,15 +114,15 @@ end
 
 local function insert(stmt, item)
     stmt:reset():bind(item.id, item.title, item.author, item.source, item.thumbnail, item.chapters, item.unread, item.added,
-        item.status):step()
+        item.status,item.anilist_id):step()
 end
 
 function Index:refresh(fetch, limit)
     limit = limit or 64
     return with_db(self, function(db)
         db:exec([[CREATE TEMP TABLE incoming(id TEXT PRIMARY KEY,title TEXT NOT NULL,author TEXT,
-            source TEXT,thumbnail TEXT,chapters INTEGER,unread INTEGER,added INTEGER,status TEXT) WITHOUT ROWID]])
-        local stmt = db:prepare("INSERT INTO incoming VALUES(?,?,?,?,?,?,?,?,?)")
+            source TEXT,thumbnail TEXT,chapters INTEGER,unread INTEGER,added INTEGER,status TEXT,anilist_id INTEGER) WITHOUT ROWID]])
+        local stmt = db:prepare("INSERT INTO incoming VALUES(?,?,?,?,?,?,?,?,?,?)")
         local offset, total = 0, nil
         repeat
             local page, err = fetch(offset, limit)
@@ -142,13 +145,15 @@ function Index:refresh(fetch, limit)
             UPDATE incoming SET unread=(SELECT count(*) FROM chapter c WHERE c.manga=incoming.id AND is_read=0)
                 WHERE id IN (SELECT manga FROM pending) AND id IN (SELECT id FROM directories);
             DELETE FROM manga WHERE id NOT IN (SELECT id FROM incoming);
-            INSERT INTO manga(id,title,author,source,thumbnail,chapters,unread,added,status)
+            INSERT INTO manga(id,title,author,source,thumbnail,chapters,unread,added,status,anilist_id)
                 SELECT * FROM incoming WHERE true
                 ON CONFLICT(id) DO UPDATE SET
                     (title,author,source,thumbnail,chapters,unread,added,status)=
-                    (excluded.title,excluded.author,excluded.source,excluded.thumbnail,excluded.chapters,excluded.unread,excluded.added,excluded.status)
-                WHERE (title,author,source,thumbnail,chapters,unread,added,status) IS NOT
-                    (excluded.title,excluded.author,excluded.source,excluded.thumbnail,excluded.chapters,excluded.unread,excluded.added,excluded.status)]])
+                    (excluded.title,excluded.author,excluded.source,excluded.thumbnail,excluded.chapters,excluded.unread,excluded.added,excluded.status),
+                    anilist_id=coalesce(excluded.anilist_id,manga.anilist_id)
+                WHERE (title,author,source,thumbnail,chapters,unread,added,status,anilist_id) IS NOT
+                    (excluded.title,excluded.author,excluded.source,excluded.thumbnail,excluded.chapters,
+                    excluded.unread,excluded.added,excluded.status,coalesce(excluded.anilist_id,manga.anilist_id))]])
         db:prepare("UPDATE shelf SET count=?, synced=?"):bind(total, os.time()):step()
         db:exec("COMMIT")
         return {count = total}
@@ -159,11 +164,11 @@ function Index:upsert(item)
     return with_db(self, function(db)
         db:exec("BEGIN IMMEDIATE")
         local known = db:prepare("SELECT 1 FROM manga WHERE id=?"):bind(item.id):step()
-        insert(db:prepare([[INSERT INTO manga(id,title,author,source,thumbnail,chapters,unread,added,status)
-            VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,
+        insert(db:prepare([[INSERT INTO manga(id,title,author,source,thumbnail,chapters,unread,added,status,anilist_id)
+            VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,
             author=excluded.author,source=excluded.source,thumbnail=excluded.thumbnail,
             chapters=excluded.chapters,unread=excluded.unread,added=coalesce(excluded.added,manga.added),
-            status=coalesce(excluded.status,manga.status)]]), item)
+            status=coalesce(excluded.status,manga.status),anilist_id=coalesce(excluded.anilist_id,manga.anilist_id)]]), item)
         if not known then db:exec("UPDATE shelf SET count=count+1") end
         db:exec("COMMIT")
         return true
@@ -194,13 +199,14 @@ function Index:page(page, limit, sort, search)
         end
         page = math.max(1, math.min(page, math.ceil(count / limit)))
         args[#args+1],args[#args+2]=limit,(page-1)*limit
-        local stmt = db:prepare([[SELECT id,title,author,source,thumbnail,chapters,unread,status,
+        local stmt = db:prepare([[SELECT id,title,author,source,thumbnail,chapters,unread,status,anilist_id,
             (SELECT count(*) FROM files WHERE files.manga=manga.id) FROM manga]] .. where ..
             " ORDER BY " .. (orders[sort] or "") .. "title COLLATE NOCASE,id LIMIT ? OFFSET ?"):bind(unpack(args))
         local items = {}
         for r in stmt:rows() do
             items[#items + 1] = {id = r[1], title = r[2], author = r[3], source = r[4],
-                thumbnail = r[5], chapters = tonumber(r[6]), unread = tonumber(r[7]), status = r[8], downloaded = tonumber(r[9]), in_library = true}
+                thumbnail = r[5], chapters = tonumber(r[6]), unread = tonumber(r[7]), status = r[8], anilist_id = tonumber(r[9]),
+                downloaded = tonumber(r[10]), in_library = true}
         end
         return {count = count, synced = synced, page = page, items = items}
     end)

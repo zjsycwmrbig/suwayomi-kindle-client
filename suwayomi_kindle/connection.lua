@@ -38,7 +38,8 @@ local LIBRARY_QUERY = [[query KindleLibrary($first: Int!, $offset: Int!) {
   mangas(filter: {inLibrary: {equalTo: true}}, first: $first, offset: $offset,
       order: [{by: ID, byType: ASC}]) {
     totalCount pageInfo { hasNextPage }
-    nodes { id title author status inLibraryAt unreadCount chapters { totalCount } thumbnailUrl source { displayName } }
+    nodes { id title author status inLibraryAt unreadCount chapters { totalCount } thumbnailUrl source { displayName }
+      trackRecords { nodes { remoteId tracker { name } } } }
   }
 }]]
 local SOURCE_MANGA_QUERY = [[mutation KindleSourceManga($input: FetchSourceMangaInput!) {
@@ -292,14 +293,37 @@ local function manga_rows(nodes)
     local rows = {}
     for i, item in ipairs(nodes) do
         if type(item) ~= "table" or not tonumber(item.id) or string_field(item.title) == "" then return nil end
+        local anilist_id
+        for _, record in ipairs(item.trackRecords and item.trackRecords.nodes or {}) do
+            if record.tracker and string_field(record.tracker.name):lower() == "anilist" then
+                anilist_id = tonumber(record.remoteId)
+                break
+            end
+        end
         rows[i] = {id = tostring(item.id), title = item.title, author = string_field(item.author),
             status = type(item.status) == "string" and item.status or "UNKNOWN",
             thumbnail = string_field(item.thumbnailUrl), description = string_field(item.description),
             source = type(item.source) == "table" and string_field(item.source.displayName) or "",
             chapters = type(item.chapters) == "table" and tonumber(item.chapters.totalCount) or nil,
-            added = tonumber(item.inLibraryAt), unread = tonumber(item.unreadCount), in_library = item.inLibrary == true}
+            added = tonumber(item.inLibraryAt), unread = tonumber(item.unreadCount), in_library = item.inLibrary == true,
+            anilist_id = anilist_id}
     end
     return rows
+end
+
+function Connection:with_tracker_id(item)
+    if item.anilist_id then return item end
+    local data, err = self:request([[query($id:Int!){manga(id:$id){
+        trackRecords { nodes { remoteId tracker { name } } }}}]], {id = tonumber(item.id)})
+    local nodes = data and data.manga and data.manga.trackRecords and data.manga.trackRecords.nodes
+    if type(nodes) ~= "table" then return item, err end
+    for _, record in ipairs(nodes) do
+        if record.tracker and string_field(record.tracker.name):lower() == "anilist" then
+            item.anilist_id = tonumber(record.remoteId)
+            break
+        end
+    end
+    return item
 end
 
 function Connection:sources(language)
@@ -337,13 +361,6 @@ function Connection:sourcePage(input)
     if not rows or type(page.hasNextPage) ~= "boolean" then return nil, err or "漫画列表响应无效。" end
     for i, item in ipairs(rows) do
         item.source = input.source.name
-        local records = page.mangas[i].trackRecords
-        for _, record in ipairs(records and records.nodes or {}) do
-            if record.tracker and string_field(record.tracker.name):lower() == "anilist" then
-                item.anilist_id = tonumber(record.remoteId)
-                break
-            end
-        end
     end
     return {mangas = rows, has_next = page.hasNextPage}
 end
@@ -373,7 +390,7 @@ function Connection:addManga(id)
 end
 
 function Connection:manga(id)
-    local fields = " id title initialized firstUnreadChapter { id } author status description thumbnailUrl unreadCount inLibrary chapters { totalCount } source { displayName } "
+    local fields = " id title initialized firstUnreadChapter { id } author status description thumbnailUrl unreadCount inLibrary chapters { totalCount } source { displayName } trackRecords { nodes { remoteId tracker { name } } } "
     local data, err = self:request("query($id:Int!){manga(id:$id){" .. fields .. "}}", {id = tonumber(id)})
     local item = data and data.manga
     if item and item.initialized == false then
