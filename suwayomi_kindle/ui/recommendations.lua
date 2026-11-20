@@ -2,13 +2,16 @@ local UI = require("ui/uimanager")
 local Text = require("ui/widget/textboxwidget")
 local Font = require("ui/font")
 local Row = require("ui/widget/horizontalgroup")
+local Gap = require("ui/widget/horizontalspan")
+local Button = require("ui/widget/button")
+local Screen = require("device").screen
 local Tile = require("suwayomi_kindle/ui/manga_tile")
 local Covers = require("suwayomi_kindle/covers")
 local Worker = require("suwayomi_kindle/worker")
 local Sources = require("suwayomi_kindle/browse_sources")
 local Recommendations = require("suwayomi_kindle/recommendations")
 
-local page_size = 3
+local page_size = 4
 local cache_seconds = 24 * 60 * 60
 local View = {}
 
@@ -185,8 +188,25 @@ function View:build_recommendations(column, width, posters)
         if not view.busy and not view.error then note(column, width, "暂未找到可读的推荐漫画。") end
         return
     end
-    local tiles = Row:new{align="top"}
-    local tile_width = math.floor(width / page_size)
+    local total = self:recommendation_page_count(view)
+    local function go(page)
+        if page < 1 or page > total or page == view.page then return end
+        view.page = page
+        self.recommendation_scroll = true
+        self:refresh()
+    end
+    self.pagination = {page=view.page, total=total, page_size=page_size, item_count=count, go=go}
+    local arrow_width = math.min(Screen:scaleBySize(36), math.floor(width / 12))
+    local icon_size = math.min(Screen:scaleBySize(20), arrow_width)
+    local function arrow(icon, target)
+        return Button:new{icon=icon, enabled=target >= 1 and target <= total, show_parent=self,
+            width=arrow_width, icon_width=icon_size, icon_height=icon_size,
+            margin=0, bordersize=0, padding=0, padding_v=Screen:scaleBySize(12),
+            callback=function() go(target) end}
+    end
+    local tiles = Row:new{align="center", allow_mirroring=false, arrow("chevron.left", view.page - 1)}
+    local cover_space = width - 2 * arrow_width
+    local tile_width = math.floor(cover_space / page_size)
     local first = (view.page - 1) * page_size + 1
     for i = first, math.min(count, first + page_size - 1) do
         local candidate = view.results[i]
@@ -197,13 +217,10 @@ function View:build_recommendations(column, width, posters)
             path=Covers.path(self.settings.connection, candidate),
             callback=function() self:open_recommended(view, candidate) end}
     end
+    local visible = math.min(page_size, count - first + 1)
+    tiles[#tiles+1] = Gap:new{width=cover_space - visible * tile_width}
+    tiles[#tiles+1] = arrow("chevron.right", view.page + 1)
     column[#column+1] = tiles
-    self.pagination = {page=view.page, total=self:recommendation_page_count(view), page_size=page_size,
-        item_count=count, go=function(page)
-            view.page = page
-            self.recommendation_scroll = true
-            self:refresh()
-        end}
 end
 
 function View:recommendation_page_count(view)
