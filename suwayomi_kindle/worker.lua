@@ -32,11 +32,14 @@ function Worker.run(config, action, input)
         if item then Chapters.saveDescription(Index.new(config),item) end
         return item, failure
     elseif action == "membership" then
-        local ok, failure = client:setMembership(input.item.id,input.enabled)
+        local ok, failure, added = client:setMembership(input.item.id,input.enabled)
         if not ok then return nil, failure end
         local index = Index.new(config)
         local saved
-        if input.enabled then saved = index:upsert(input.item) else saved = index:remove(input.item.id) end
+        if input.enabled then
+            input.item.added=added
+            saved=index:upsert(input.item)
+        else saved=index:remove(input.item.id) end
         return {enabled = input.enabled, warning = not saved and "服务器已更新，请刷新本地书架。" or nil}
     elseif action == "chapters" then
         return Chapters.refresh(Index.new(config),client,input.id,input.force)

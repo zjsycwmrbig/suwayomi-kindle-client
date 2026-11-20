@@ -87,6 +87,9 @@ function SettingRow:init()
             },
         },
     }
+    if self.hold_callback then
+        self.ges_events.HoldSettingRow = {GestureRange:new{ges="hold",range=self.dimen}}
+    end
 end
 
 function SettingRow:getSize()
@@ -97,6 +100,11 @@ function SettingRow:onTapSettingRow()
     if self.callback then
         self.callback()
     end
+    return true
+end
+
+function SettingRow:onHoldSettingRow()
+    self.hold_callback()
     return true
 end
 

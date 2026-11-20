@@ -42,7 +42,7 @@ function Catalog:reset_catalog()
     self:reset_browse()
     self.all_sources, self.pinned, self.directory = nil, nil, nil
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
-    self.shelf_page, self.index = 1, nil
+    self.shelf_page, self.index, self.shelf_search = 1, nil, nil
     self.task_page,self.task_view,self.task_message=1,"queue",nil
     self.task_filter,self.task_file_scope,self.task_folder="all","managed",nil
     self.task_selection,self.task_editing={},false
@@ -124,6 +124,28 @@ local function start_source(home, source)
     fetch_page(home, "POPULAR", nil, home.catalog_size, 1, true)
 end
 
+local shelf_sorts = {
+    {"opened","最近打开"},{"added","添加时间"},{"title","书名"},{"unread","未读数"},{"chapters","章节数"},
+}
+
+local function shelf_actions(home,refresh)
+    return {refresh,{icon="search",home.shelf_search and "退出书架搜索" or "搜索书架",function()
+        if home.shelf_search then home.shelf_search=nil else home.shelf_search={} end
+        home.shelf_page=1
+        home:refresh()
+    end},{"排序",children=function()
+        local items={}
+        for _,sort in ipairs(shelf_sorts) do
+            items[#items+1]={sort[2],icon=home.settings.library.sort==sort[1] and "check" or nil,function()
+                local saved,err=home.settings_store:update("library",{sort=sort[1]})
+                if saved then home.settings.library,home.shelf_page=saved,1 else home.catalog_message=err end
+                home:refresh()
+            end}
+        end
+        return items
+    end}}
+end
+
 function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
     if self.selected_tab == "tasks" then return self:task_actions() end
@@ -138,12 +160,14 @@ function Catalog:catalog_actions()
         end}
     end
     if self.pending then
-        return {{icon = "close", "取消请求", function()
+        local cancel = {icon = "close", "取消请求", function()
             self:cancel_catalog()
             self.shelf_requested, self.browse.requested = true, true
             self.catalog_message = "请求已取消"
             self:refresh()
-        end},pin}
+        end}
+        if self.pending=="library" then return shelf_actions(self,cancel) end
+        return {cancel,pin}
     end
     if self.directory then
         local actions = {{icon="refresh","刷新章节",function() self:refresh_directory(true) end},
@@ -159,7 +183,7 @@ function Catalog:catalog_actions()
         return {{icon="refresh","刷新详情",function() self:refresh_detail() end}}
     end
     if self.selected_tab == "library" then
-        return {{icon = "refresh", "从服务器刷新", function() refresh_shelf(self) end}}
+        return shelf_actions(self,{icon="refresh","从服务器刷新",function() refresh_shelf(self) end})
     end
     local b = self.browse
     if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end}} end
@@ -178,9 +202,9 @@ function Catalog:source_pins()
 end
 
 -- The same inline field searches installed sources or the selected source.
-local function search_bar(home, column, width, source, submit)
-    local b = home.browse
-    local key = source and "query" or "source_query"
+local function search_bar(home, column, width, source, submit, shelf)
+    local b = shelf or home.browse
+    local key = (shelf or source) and "query" or "source_query"
     local button_w, gap = scale(58), scale(6)
     local padding, border = scale(6), scale(1)
     local field
@@ -191,7 +215,7 @@ local function search_bar(home, column, width, source, submit)
     end
     field = InputText:new{parent = home, focused = false, width = width - button_w - gap - 2*(padding+border),
         height = scale(24), padding = padding, margin = 0, bordersize = border, scroll = true,
-        text = b[key] or "", hint = source and "在这个源中搜索漫画" or "查找漫画源",
+        text = b[key] or "", hint = shelf and "搜索书名或作者" or source and "在这个源中搜索漫画" or "查找漫画源",
         face = Font:getFace("smallinfofont", 16), enter_callback = apply}
     home:bind_keyboard_close(field)
     home.input_form = {fields = {}, capture = function() b[key] = field:getText() end}
@@ -261,12 +285,17 @@ local function manga_list(home, column, width, items, grid)
         local function open()
             home:open_detail(item)
         end
+        local continue = home.selected_tab=="library" and function()
+            home:local_index():markOpened(item.id)
+            home.detail=item
+            home:open_directory(true)
+        end or nil
         local chapters = item.chapters and (item.chapters .. " 章") or "章节数待刷新"
         if item.unread then chapters = chapters .. " · " .. item.unread .. " 未读" end
         if grid then
             if i % 3 == 1 then tiles = Row:new{}; column[#column + 1] = tiles end
             tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = chapters,
-                poster_height = home.shelf_poster_height, path = Covers.path(home.settings.connection, item), callback = open}
+                poster_height = home.shelf_poster_height, path = Covers.path(home.settings.connection, item), callback = open, hold_callback = continue}
         else
             local path = Covers.path(home.settings.connection, item)
             local shelf = home.selected_tab == "library"
@@ -280,7 +309,7 @@ local function manga_list(home, column, width, items, grid)
             if shelf then chapters = chapters .. " · " .. (item.downloaded or 0) .. " 已下载" end
             column[#column + 1] = SettingRow:new{label = item.title, value = chapters,
                 detail_line = #credits > 0 and table.concat(credits," · ") or nil,
-                leading = poster, width = width, inset=4, leading_width=56, callback = open,
+                leading = poster, width = width, inset=4, leading_width=56, callback = open, hold_callback=continue,
                 row_height=shelf and 72 or 66}
         end
     end
@@ -289,7 +318,14 @@ end
 
 local function library(home, column, width, size, grid)
     home.index = home.index or Index.new(home.settings.connection)
-    local data, err = home.index:page(home.shelf_page, size)
+    local search=home.shelf_search
+    if search then
+        search_bar(home,column,width,false,function(query)
+            search.filter,home.shelf_page=query,1
+            home:refresh()
+        end,search)
+    end
+    local data, err = home.index:page(home.shelf_page, size, home.settings.library.sort, search and search.filter)
     if not data then note(column, width, err); return end
     home.shelf_page = data.page
     if data.synced == 0 and not home.shelf_requested then
@@ -297,7 +333,7 @@ local function library(home, column, width, size, grid)
         defer(home, refresh_shelf)
     end
     if data.count == 0 then
-        note(column, width, data.synced == 0 and "还没有本地书架记录。" or "服务器书架为空。")
+        note(column, width, search and search.filter and search.filter~="" and "没有匹配的漫画。" or data.synced == 0 and "还没有本地书架记录。" or "服务器书架为空。")
         return
     end
     local pages = math.ceil(data.count / size)
@@ -380,6 +416,7 @@ function Catalog:build_catalog(screen_width, height)
     self.shelf_poster_height = nil
     if self.selected_tab == "library" and not self.detail then
         local available = height - scale((self.pending or self.catalog_message) and 76 or 46)
+        if self.shelf_search then available=available-scale(44) end
         if grid then
             local ideal = math.floor((width / 3 - scale(10)) / 0.71)
             local captions = scale(54)

@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 6 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 7 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -65,7 +65,16 @@ local function with_db(index, action)
                 db:exec([[ALTER TABLE queue ADD COLUMN pages_done INTEGER;
                     ALTER TABLE queue ADD COLUMN pages_total INTEGER;]])
             end
-            db:exec("PRAGMA user_version=6; COMMIT")
+            if version < 7 then
+                db:exec([[ALTER TABLE manga ADD COLUMN added INTEGER;
+                    ALTER TABLE manga ADD COLUMN opened INTEGER;
+                    CREATE INDEX shelf_added ON manga(added DESC,title COLLATE NOCASE,id);
+                    CREATE INDEX shelf_opened ON manga(opened DESC,title COLLATE NOCASE,id);
+                    CREATE INDEX shelf_unread ON manga(unread DESC,title COLLATE NOCASE,id);
+                    CREATE INDEX shelf_chapters ON manga(chapters DESC,title COLLATE NOCASE,id);
+                    UPDATE shelf SET synced=0;]])
+            end
+            db:exec("PRAGMA user_version=7; COMMIT")
         end
         return action(db)
     end)
@@ -76,14 +85,14 @@ local function with_db(index, action)
 end
 
 local function insert(stmt, item)
-    stmt:reset():bind(item.id, item.title, item.author, item.source, item.thumbnail, item.chapters, item.unread):step()
+    stmt:reset():bind(item.id, item.title, item.author, item.source, item.thumbnail, item.chapters, item.unread, item.added):step()
 end
 
 function Index:refresh(fetch, limit)
     limit = limit or 64
     return with_db(self, function(db)
         db:exec("CREATE TEMP TABLE incoming AS SELECT * FROM manga LIMIT 0")
-        local stmt = db:prepare("INSERT INTO incoming VALUES(?,?,?,?,?,?,?)")
+        local stmt = db:prepare("INSERT INTO incoming VALUES(?,?,?,?,?,?,?,?,NULL)")
         local offset, total = 0, nil
         repeat
             local page, err = fetch(offset, limit)
@@ -98,7 +107,9 @@ function Index:refresh(fetch, limit)
             for _, item in ipairs(page.rows) do insert(stmt, item) end
             offset = next_offset
         until offset == total
-        db:exec("BEGIN IMMEDIATE; DELETE FROM manga; INSERT INTO manga SELECT * FROM incoming")
+        db:exec([[BEGIN IMMEDIATE;
+            UPDATE incoming SET opened=(SELECT opened FROM manga WHERE manga.id=incoming.id);
+            DELETE FROM manga; INSERT INTO manga SELECT * FROM incoming]])
         db:exec([[UPDATE manga SET unread=(SELECT count(*) FROM chapter c WHERE c.manga=manga.id AND is_read=0)
             WHERE id IN (SELECT DISTINCT manga FROM pending) AND id IN (SELECT id FROM directories)]])
         db:prepare("UPDATE shelf SET count=?, synced=?"):bind(total, os.time()):step()
@@ -111,22 +122,42 @@ function Index:upsert(item)
     return with_db(self, function(db)
         db:exec("BEGIN IMMEDIATE")
         local known = db:prepare("SELECT 1 FROM manga WHERE id=?"):bind(item.id):step()
-        insert(db:prepare("INSERT OR REPLACE INTO manga VALUES(?,?,?,?,?,?,?)"), item)
+        insert(db:prepare([[INSERT INTO manga(id,title,author,source,thumbnail,chapters,unread,added)
+            VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title,
+            author=excluded.author,source=excluded.source,thumbnail=excluded.thumbnail,
+            chapters=excluded.chapters,unread=excluded.unread,added=coalesce(excluded.added,manga.added)]]), item)
         if not known then db:exec("UPDATE shelf SET count=count+1") end
         db:exec("COMMIT")
         return true
     end)
 end
 
-function Index:page(page, limit)
+function Index:markOpened(id)
+    return with_db(self,function(db)
+        local millis = math.floor(require("socket").gettime()*1000)
+        db:prepare("UPDATE manga SET opened=? WHERE id=?"):bind(millis,id):step()
+        return true
+    end)
+end
+
+local orders = {title="",opened="opened DESC,",added="added DESC,",unread="unread DESC,",chapters="chapters DESC,"}
+
+function Index:page(page, limit, sort, search)
     return with_db(self, function(db)
         db:exec("BEGIN")
         local count, synced = db:rowexec("SELECT count,synced FROM shelf")
         count, synced = tonumber(count), tonumber(synced)
+        local where,args="",{}
+        if search and search~="" then
+            where=" WHERE instr(lower(title),lower(?))>0 OR instr(lower(author),lower(?))>0"
+            args={search,search}
+            count=tonumber(db:prepare("SELECT count(*) FROM manga" .. where):bind(unpack(args)):step()[1])
+        end
         page = math.max(1, math.min(page, math.ceil(count / limit)))
+        args[#args+1],args[#args+2]=limit,(page-1)*limit
         local stmt = db:prepare([[SELECT id,title,author,source,thumbnail,chapters,unread,
-            (SELECT count(*) FROM files WHERE files.manga=manga.id) FROM manga
-            ORDER BY title COLLATE NOCASE,id LIMIT ? OFFSET ?]]):bind(limit, (page - 1) * limit)
+            (SELECT count(*) FROM files WHERE files.manga=manga.id) FROM manga]] .. where ..
+            " ORDER BY " .. (orders[sort] or "") .. "title COLLATE NOCASE,id LIMIT ? OFFSET ?"):bind(unpack(args))
         local items = {}
         for r in stmt:rows() do
             items[#items + 1] = {id = r[1], title = r[2], author = r[3], source = r[4],

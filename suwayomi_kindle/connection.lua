@@ -38,7 +38,7 @@ local LIBRARY_QUERY = [[query KindleLibrary($first: Int!, $offset: Int!) {
   mangas(filter: {inLibrary: {equalTo: true}}, first: $first, offset: $offset,
       order: [{by: ID, byType: ASC}]) {
     totalCount pageInfo { hasNextPage }
-    nodes { id title author unreadCount chapters { totalCount } thumbnailUrl source { displayName } }
+    nodes { id title author inLibraryAt unreadCount chapters { totalCount } thumbnailUrl source { displayName } }
   }
 }]]
 local SOURCE_MANGA_QUERY = [[mutation KindleSourceManga($input: FetchSourceMangaInput!) {
@@ -47,7 +47,7 @@ local SOURCE_MANGA_QUERY = [[mutation KindleSourceManga($input: FetchSourceManga
   }
 }]]
 local ADD_MUTATION = [[mutation KindleAdd($input: UpdateMangaInput!) {
-  updateManga(input: $input) { manga { id inLibrary } }
+  updateManga(input: $input) { manga { id inLibrary inLibraryAt } }
 }]]
 
 local function base64_encode(input)
@@ -290,7 +290,7 @@ local function manga_rows(nodes)
             thumbnail = string_field(item.thumbnailUrl), description = string_field(item.description),
             source = type(item.source) == "table" and string_field(item.source.displayName) or "",
             chapters = type(item.chapters) == "table" and tonumber(item.chapters.totalCount) or nil,
-            unread = tonumber(item.unreadCount), in_library = item.inLibrary == true}
+            added = tonumber(item.inLibraryAt), unread = tonumber(item.unreadCount), in_library = item.inLibrary == true}
     end
     return rows
 end
@@ -344,7 +344,7 @@ function Connection:setMembership(id, enabled)
     if not manga or tostring(manga.id) ~= id or manga.inLibrary ~= enabled then
         return nil, err or "服务器没有确认书架变更。"
     end
-    return true
+    return true, nil, tonumber(manga.inLibraryAt)
 end
 
 function Connection:addManga(id)

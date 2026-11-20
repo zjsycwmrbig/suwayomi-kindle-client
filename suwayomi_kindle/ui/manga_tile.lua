@@ -26,9 +26,17 @@ function Tile:init()
     self.dimen = Geom:new{w = self.width, h = body:getSize().h + screen:scaleBySize(6)}
     self[1] = Center:new{dimen = self.dimen, body}
     self.ges_events = {TapManga = {Gesture:new{ges = "tap", range = self.dimen}}}
+    if self.hold_callback then
+        self.ges_events.HoldManga = {Gesture:new{ges="hold",range=self.dimen}}
+    end
 end
 function Tile:onTapManga()
     self.callback()
     return true
 end
+function Tile:onHoldManga()
+    self.hold_callback()
+    return true
+end
+
 return Tile

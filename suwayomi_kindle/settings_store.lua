@@ -12,7 +12,7 @@ local defaults = {
         last_verified_credential_hash = "", last_verified_at = 0},
     theme = {mode = "day"},
     download = {directory = "", max_parallel = 1, retention = "1"},
-    library = {view_mode = "list"},
+    library = {view_mode = "list", sort = "title"},
     browse = {view_mode = "list", language = "zh"},
 }
 

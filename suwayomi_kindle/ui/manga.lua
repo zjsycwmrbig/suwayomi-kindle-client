@@ -27,6 +27,7 @@ end
 function Manga:open_detail(item)
     self:cancel_catalog()
     self.detail, self.directory = item,nil
+    if item.in_library then self:local_index():markOpened(item.id) end
     item.first_unread_id = nil
     item.description = Chapters.description(self:local_index(),item.id) or item.description
     self:refresh_detail()

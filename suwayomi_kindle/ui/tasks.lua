@@ -145,6 +145,12 @@ function Page:leave_task_folder()
     self:refresh()
 end
 
+local function enter_folder(home,item)
+    home.task_folder_page,home.task_folder,home.task_page=home.task_page,item,1
+    clear_selection(home)
+    home:refresh()
+end
+
 local function file_menu(home,item,label)
     local dialog
     local function action(text,fn)
@@ -154,9 +160,7 @@ local function file_menu(home,item,label)
     local buttons={}
     if folder then
         buttons[1]=action("查看章节文件",function()
-            home.task_folder_page,home.task_folder,home.task_page=home.task_page,item,1
-            clear_selection(home)
-            home:refresh()
+            enter_folder(home,item)
         end)
     elseif item.state=="orphan" then
         buttons[1]=action("查看文件信息",function() notice(item.reason .. "\n" .. item.path) end)
@@ -393,7 +397,10 @@ function Page:build_tasks(screen_width,height)
                 if item.error and item.error~="" then value=value .. " · " .. item.error end
             end
             if self.task_editing then label=(selected and "☑  " or "☐  ") .. label end
-            column[#column+1]=SettingRow:new{width=width,label=label,value=value,
+            local folder_link=item.state=="folder" and not self.task_editing
+            local arrow_width=folder_link and scale(52) or 0
+            local row=SettingRow:new{width=width-arrow_width,label=label,value=value,
+                hide_chevron=folder_link or self.task_editing,
                 leading=selected and Icons.widget("check",scale(18)) or item.state=="folder" and Icons.widget("folder",scale(23)) or nil,
                 callback=function()
                     if self.task_editing then toggle_selection(self,item)
@@ -410,6 +417,13 @@ function Page:build_tasks(screen_width,height)
                         UI:show(dialog)
                     else file_menu(self,item,label) end
                 end}
+            if folder_link then
+                local arrow=require("suwayomi_kindle/ui/header").IconButton:new{icon_name="chevron_right",
+                    dimen=require("ui/geometry"):new{w=arrow_width,h=row:getSize().h},
+                    callback=function() enter_folder(self,item) end}
+                row=Row:new{row,arrow}
+            end
+            column[#column+1]=row
         end
     end
     return self:settings_page_frame(screen_width,height,width,column)

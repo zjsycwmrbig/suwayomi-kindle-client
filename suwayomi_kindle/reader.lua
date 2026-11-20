@@ -18,7 +18,10 @@ end
 function Reader:onReaderReady()
     local row=target(self)
     self.reading_chapter=row
-    if row then require("suwayomi_kindle/reader_navigation").install(self) end
+    if row then
+        row.index:markOpened(row.manga)
+        require("suwayomi_kindle/reader_navigation").install(self)
+    end
     if row and row.page then
         self.ui:registerPostReaderReadyCallback(function()
             local page=math.min(row.page+1,self.ui.document:getPageCount())

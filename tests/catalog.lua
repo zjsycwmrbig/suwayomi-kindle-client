@@ -46,7 +46,7 @@ db:close()
 local migrated = assert(ix:page(1, 9))
 assert(migrated.count == 1 and migrated.synced == 0 and migrated.items[1].chapters == nil)
 local function manga(n)
-    return {id = tostring(n), title = string.format("Book %05d", n), source = "Source", author = "", thumbnail = "", chapters = n, unread = 0}
+    return {id = tostring(n), title = string.format("Book %05d", n), source = "Source", author = "", thumbnail = "", added = 1700000000+n, chapters = n, unread = 0}
 end
 local function page(offset, limit)
     local rows, total = {}, 1203
@@ -54,6 +54,14 @@ local function page(offset, limit)
     return {rows = rows, total = total, more = offset + #rows < total}
 end
 assert(ix:refresh(page).count == 1203)
+assert(ix:page(1,3,"added").items[1].id=="1203")
+assert(ix:page(1,3,"chapters").items[1].id=="1203")
+assert(ix:markOpened("17"))
+assert(ix:refresh(page))
+assert(ix:page(1,3,"opened").items[1].id=="17")
+assert(ix:page(1,5,"added","bOOk 0001").count==10)
+assert(ix:page(2,5,"added","bOOk 0001").items[1].id=="14")
+assert(ix:page(1,5,"title","%_").count==0)
 local visible = assert(ix:page(2, 9))
 assert(visible.items[1].chapters == 10 and visible.items[1].unread == 0)
 assert(visible.count == 1203 and #visible.items == 9 and visible.items[1].id == "10")
