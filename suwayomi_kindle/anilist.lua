@@ -39,8 +39,8 @@ end
 function AniList.resolve(title, transport)
     local id, err = lookup({title}, transport)
     if id or err then return id, err end
-    local aliases, alias_err = Titles.translations(title)
-    if not aliases then return nil, alias_err end
+    local aliases = Titles.translations(title)
+    if not aliases then return false, nil, true end
     local names = {}
     for _, alias in ipairs(aliases) do
         if Titles.key(alias) ~= Titles.key(title) then names[#names+1] = alias end
@@ -56,8 +56,9 @@ end
 
 function AniList.recommend(id, title, limit, transport)
     if not id then
-        local resolved, err = AniList.resolve(title, transport)
+        local resolved, err, missing_aliases = AniList.resolve(title, transport)
         if err then return nil, err end
+        if missing_aliases then return nil, "AniList 未能确认原作，别名服务暂不可用。请稍后重试。" end
         if not resolved then return {items={}, limit=limit, fetched_at=os.time(), version=2} end
         id = resolved
     end

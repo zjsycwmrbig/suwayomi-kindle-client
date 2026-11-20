@@ -136,10 +136,24 @@ local function start_source(home, source, manual)
         if saved then home.source_history = nil end
     end
     b.source, b.results, b.counts, b.ended = source, nil, {}, false
-    b.mode, b.page, b.slice, b.search, b.query = "POPULAR", 1, 1, nil, ""
+    local item = b.recommended_item
+    b.recommended_item = nil
+    local query = item and require("suwayomi_kindle/recommendations").searchTitle(item, source.lang)
+    b.mode, b.page, b.slice, b.search, b.query = query and "SEARCH" or "POPULAR", 1, 1, query, query or ""
     home:refresh()
-    fetch_page(home, "POPULAR", nil, home.catalog_size, 1, true)
+    fetch_page(home, b.mode, query, home.catalog_size, 1, true)
     if err then UI:show(require("ui/widget/infomessage"):new{text=err,timeout=3}) end
+end
+
+function Catalog:search_recommended(item)
+    self:cancel_catalog()
+    self:close_drawer()
+    self.detail, self.directory, self.reader_origin = nil, nil, nil
+    self.detail_stack, self.recommendation_view, self.recommendation_scroll = nil, nil, nil
+    self.catalog_message = nil
+    self:reset_browse()
+    self.browse.recommended_item = item
+    if self.selected_tab == "browse" then self:refresh() else self:set_tab("browse") end
 end
 
 local shelf_sorts = {
@@ -299,6 +313,10 @@ local function restore_browse_source(home)
     b.auto_open = false
     local source = BrowseSources.landing(home.all_sources, home.settings.browse.language, home:source_history_data(),
         home:source_pins())
+    if not source and b.recommended_item then
+        source = BrowseSources.list(home.all_sources, home.settings.browse.language, nil, "opened",
+            home:source_pins(), home:source_history_data().opened)[1]
+    end
     if source and (not b.source or b.source.id ~= source.id or not b.results) then
         defer(home, function()
             if home.browse == b and home.selected_tab == "browse" then start_source(home, source, false) end
@@ -410,6 +428,7 @@ end
 
 local function sources(home, column, width, size)
     local b = home.browse
+    if b.recommended_item then note(column, width, "搜索漫画 · " .. b.recommended_item.title) end
     search_bar(home, column, width, false, function(query)
         b.filter, b.sources_page = query:lower(), 1
         home:refresh()

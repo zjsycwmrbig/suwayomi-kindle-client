@@ -151,10 +151,10 @@ local snapshot = {source_order={"zh","en"}, media=1, items={recommendation,
     {id=125,sources={zh={verified=true,matches={{id="45",anilist_id=123}}}}},
 }}
 local matched = matching.pageResults(snapshot, "42", 1, 4)
-assert(#matched==1 and matched[1].id=="45")
+assert(#matched==2 and matched[1].match.id=="45" and matched[2].item.id==125 and not matched[2].match)
 snapshot.source_order={"en","zh"}
 matched = matching.pageResults(snapshot, "42", 1, 4)
-assert(#matched==1 and matched[1].id=="54")
+assert(#matched==2 and matched[1].match.id=="54" and not matched[2].match)
 local Chapters = require("suwayomi_kindle/chapters")
 local api = {chapterPage = function(_,_,offset,limit)
     local rows = {}

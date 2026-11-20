@@ -286,17 +286,17 @@ worker.start=function(_,_,action,input,done)
     return {cancel=function() end}
 end
 finish_request({media=90,items=recommendation_items,limit=5,version=2,fetched_at=os.time()})
-assert(#pending_sources==4)
+assert(#pending_sources==4 and find(home,"title","相似漫画 4") and not home.pagination)
 for i=1,4 do
     local task=assert(pending_sources[i])
     assert(task.item==100+i and task.source==pending_sources[1].source)
     task.done({matches={{id=tostring(583+i),title="推荐漫画 "..i,source_id=task.source,source="源",anilist_id=task.item}}})
     run_deferred()
 end
-assert(#pending_sources==4 and home.pagination.total==2)
+assert(#pending_sources==4 and not home.pagination)
 home:find_recommendations(home:recommendation_state())
 assert(#pending_sources==4 and not home.recommendation_view.jobs)
-assert(home.pagination.page_size==4 and find(home,"title","推荐漫画 4") and not find(home,"title","推荐漫画 5"))
+assert(not home.pagination and find(home,"title","推荐漫画 4") and not find(home,"title","推荐漫画 5"))
 local shelf_row=assert(parent_of(home,find(home,"title","推荐漫画 4")))
 assert(not shelf_row[1].enabled and shelf_row[#shelf_row].icon=="chevron.right")
 shelf_row[#shelf_row].callback()
@@ -314,11 +314,20 @@ local recommended_row=assert(find(home,"title","推荐漫画 1"))
 recommended_row.callback()
 assert(home.detail.id=="584" and not home.index:recommendationData("584").snapshot)
 home:catalog_back()
-assert(home.detail.id=="84" and home.pagination.page==1)
+assert(home.detail.id=="84" and home:recommendation_state().page==1 and not home.pagination)
 home.recommendation_view=nil
 home:refresh()
-assert(home.pagination.total==2 and find(home,"title","推荐漫画 1"))
-home:catalog_back()
+assert(not home.pagination and find(home,"title","推荐漫画 1"))
+local snapshot=home:recommendation_state().snapshot
+snapshot.items[1].sources = {}
+home.recommendation_view=nil
+assert(home.index:saveRecommendations("84",snapshot))
+home:refresh()
+assert(find(home,"title","相似漫画 1")).callback()
+run_deferred()
+assert(home.selected_tab=="browse" and not home.detail and last_request.action=="source_seek")
+assert(last_request.input.mode=="SEARCH" and last_request.input.search=="相似漫画 1")
+home:set_tab("library")
 worker.start = worker_start
 
 home.detail = {id="41",title="测试漫画",source="测试源",description="简介内容",chapters=32,in_library=true,status="ON_HIATUS"}

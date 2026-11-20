@@ -206,16 +206,12 @@ function View:build_recommendations(column, width, posters)
         if not view.busy and not view.error then note(column, width, "无推荐漫画。") end
         return
     end
-    if #view.results == 0 and not view.busy and not view.error then
-        note(column, width, "本页暂无通过 AniList 核对的漫画源结果。")
-    end
     local total = self:recommendation_page_count(view)
     local function go(page)
         if page < 1 or page > total or page == view.page then return end
         self:cancel_recommendations()
         self:find_recommendations(view, page)
     end
-    self.pagination = {page=view.page, total=total, page_size=page_size, item_count=count, go=go}
     local arrow_width = math.min(Screen:scaleBySize(36), math.floor(width / 12))
     local icon_size = math.min(Screen:scaleBySize(20), arrow_width)
     local function arrow(icon, target)
@@ -227,13 +223,22 @@ function View:build_recommendations(column, width, posters)
     local tiles = Row:new{align="center", allow_mirroring=false, arrow("chevron.left", view.page - 1)}
     local cover_space = width - 2 * arrow_width
     local tile_width = math.floor(cover_space / page_size)
-    for _, candidate in ipairs(view.results) do
-        posters[#posters+1] = candidate
-        tiles[#tiles+1] = Tile:new{width=tile_width, title=candidate.title,
-            subtitle=candidate.author and candidate.author ~= "" and candidate.author or candidate.source,
-            poster_height=math.floor((tile_width - 6) / 0.71),
-            path=Covers.path(self.settings.connection, candidate),
-            callback=function() self:open_recommended(view, candidate) end}
+    for _, slot in ipairs(view.results) do
+        local item, candidate = slot.item, slot.match
+        local title, subtitle, path, open
+        if candidate then
+            posters[#posters+1] = candidate
+            title = candidate.title
+            subtitle = candidate.author and candidate.author ~= "" and candidate.author or candidate.source
+            path = Covers.path(self.settings.connection, candidate)
+            open = function() self:open_recommended(view, candidate) end
+        else
+            title = item.title
+            subtitle = "去探索搜索"
+            open = function() self:search_recommended(item) end
+        end
+        tiles[#tiles+1] = Tile:new{width=tile_width, title=title, subtitle=subtitle,
+            poster_height=math.floor((tile_width - 6) / 0.71), path=path, callback=open}
     end
     local visible = #view.results
     tiles[#tiles+1] = Gap:new{width=cover_space - visible * tile_width}

@@ -19,15 +19,21 @@ local function search_names(item, lang, aliases)
     return names
 end
 
+function Recommendations.searchTitle(item, lang)
+    return search_names(item, Languages.base(lang), item.translations)[1] or item.title
+end
+
 function Recommendations.search(client, source, item)
     local lang = Languages.base(source.lang)
     local searched, identities = {}, {}
     local aliases = item.translations
     local alternate_checks = 0
+    local incomplete = false
     local function verify(candidate)
         local key = Titles.key(candidate.title)
         if identities[key] == nil then
-            local id, err = AniList.resolve(candidate.title)
+            local id, err, missing_aliases = AniList.resolve(candidate.title)
+            incomplete = incomplete or missing_aliases
             if err then return nil, err end
             identities[key] = id
         end
@@ -77,14 +83,15 @@ function Recommendations.search(client, source, item)
     end
     local match, err = search(search_names(item, lang, aliases))
     if not match and not err and lang == "zh" and not aliases then
-        aliases, err = Titles.translations(item.titles.native or item.titles.english or item.titles.romaji)
+        aliases = Titles.translations(item.titles.native or item.titles.english or item.titles.romaji)
+        incomplete = incomplete or not aliases
         if aliases and #aliases > 0 then match, err = search(search_names(item, lang, aliases)) end
     end
     if err then return nil, err end
     if match then
         match.source_id, match.source, match.anilist_id = source.id, source.name, item.id
     end
-    return {matches=match and {match} or {}, translations=aliases}
+    return {matches=match and {match} or {}, translations=aliases, failed=not match and incomplete or nil}
 end
 
 function Recommendations.pageResults(snapshot, manga, page, size)
@@ -93,11 +100,13 @@ function Recommendations.pageResults(snapshot, manga, page, size)
     local first = (page - 1) * size + 1
     for i = first, math.min(#snapshot.items, first + size - 1) do
         local item = snapshot.items[i]
+        local slot = {item=item}
+        results[#results+1] = slot
         for _, source in ipairs(snapshot.source_order or {}) do
             local cached = item.sources and item.sources[source]
             local match = cached and cached.verified and cached.matches[1]
             if match and match.anilist_id == item.id and not seen[match.id] then
-                results[#results+1], seen[match.id] = match, true
+                slot.match, seen[match.id] = match, true
                 break
             end
         end

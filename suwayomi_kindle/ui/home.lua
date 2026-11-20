@@ -233,10 +233,6 @@ function Home:refresh()
     self.drawer_height = main_height - self.drawer_top
     local paginated = self.selected_tab == "settings" and (self.settings_route == "languages" or self.settings_route == "sync")
         or self.selected_tab ~= "settings" and (not self.detail or self.directory) and self.settings.connection.server_url ~= ""
-    if self.detail and not self.directory then
-        local view = self:recommendation_state()
-        paginated = view and self:recommendation_page_count(view) > 1
-    end
     self.pagination = nil
     local footer = self.detail and not self.directory and self:detail_footer(screen.w)
     local body_height = main_height - header:getSize().h
