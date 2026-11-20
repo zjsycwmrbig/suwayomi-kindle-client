@@ -23,56 +23,60 @@ local function search_names(item, lang)
     return result
 end
 
-function Recommendations.search(client, source, items)
-    local result, cache = {}, {}
-    for _,item in ipairs(items) do
-        local names, keys, matches, seen, failed = search_names(item,Languages.base(source.lang)),{}, {}, {}, false
-        for _,name in ipairs(names) do keys[normalize(name)]=true end
-        for i=1,math.min(2,#names) do
-            local term=names[i]
-            local page=cache[term]
-            if page==nil then
-                page=client:sourcePage{source=source,mode="SEARCH",page=1,search=term} or false
-                cache[term]=page
-            end
-            if not page then failed=true; break end
-            for _,candidate in ipairs(page.mangas) do
-                if keys[normalize(candidate.title)] and not seen[candidate.id] and #matches<6 then
-                    seen[candidate.id]=true
-                    matches[#matches+1]={id=candidate.id,title=candidate.title,author=candidate.author,
-                        source=source.name,source_id=source.id,in_library=candidate.in_library==true,
-                        thumbnail=candidate.thumbnail,status=candidate.status,chapters=candidate.chapters}
+-- Source entries carry a canonical ID only when the server has an AniList track record.
+function Recommendations.search(client, source, item)
+    local names = search_names(item, Languages.base(source.lang))
+    local aliases = {}
+    for _, name in ipairs(names) do aliases[normalize(name)] = true end
+    for i = 1, math.min(2, #names) do
+        local page, err = client:sourcePage{source=source, mode="SEARCH", page=1,
+            search=names[i], recommendation=true}
+        if not page then return nil, err end
+        local best, best_rank
+        for _, candidate in ipairs(page.mangas) do
+            local tracked = candidate.anilist_id
+            local matches = tracked == item.id or (not tracked and aliases[normalize(candidate.title)])
+            if matches and candidate.id ~= item.origin then
+                local rank = (tracked and 2 or 0) + (candidate.in_library and 1 or 0)
+                if not best_rank or rank > best_rank then
+                    best, best_rank = candidate, rank
                 end
             end
-            if #matches>0 then break end
         end
-        result[tostring(item.id)]={matches=matches,failed=failed}
+        if best then
+            best.source_id, best.source = source.id, source.name
+            return {matches={best}}
+        end
     end
-    return result
+    return {matches={}}
 end
 
-function Recommendations.matches(item,sources)
-    local rows,seen,checked,failed={}, {},0,0
-    for position,source in ipairs(sources) do
-        local result=item.sources and item.sources[source.id]
-        if result then
-            checked=checked+1
-            if result.failed then failed=failed+1 end
-            for _,candidate in ipairs(result.matches) do
-                local key=candidate.source_id..":"..candidate.id
-                if not seen[key] then
-                    seen[key]=true
-                    rows[#rows+1]={item=candidate,position=position}
+-- Legacy snapshots may have several source editions inside one AniList recommendation.
+function Recommendations.results(snapshot, manga_id)
+    local results, seen_media, seen_entries = {}, {}, {[tostring(manga_id)]=true}
+    for _, item in ipairs(snapshot.items) do
+        local sources = snapshot.source_order
+        if not sources then
+            sources = {}
+            for id in pairs(item.sources or {}) do sources[#sources+1] = id end
+            table.sort(sources)
+        end
+        if item.id ~= snapshot.media and not seen_media[item.id] then
+            for _, id in ipairs(sources) do
+                local cached = item.sources and item.sources[id]
+                for _, candidate in ipairs(cached and cached.matches or {}) do
+                    local key = tostring(candidate.id)
+                    if not seen_entries[key] and (not candidate.anilist_id or candidate.anilist_id == item.id) then
+                        results[#results+1] = candidate
+                        seen_entries[key], seen_media[item.id] = true, true
+                        break
+                    end
                 end
+                if seen_media[item.id] then break end
             end
         end
     end
-    table.sort(rows,function(a,b)
-        if a.item.in_library~=b.item.in_library then return a.item.in_library end
-        if a.position~=b.position then return a.position<b.position end
-        return a.item.id<b.item.id
-    end)
-    return rows,checked,failed
+    return results
 end
 
 return Recommendations

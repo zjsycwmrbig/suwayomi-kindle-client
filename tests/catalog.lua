@@ -124,17 +124,24 @@ local source_fixture = {sourcePage=function(_, input)
         {id="42",title="怪兽8号 RELAX",author="Naoya Matsumoto"},
         {id="43",title="怪兽 ８ 号",author="Naoya Matsumoto"},
         {id="43",title="怪兽 ８ 号",author="Naoya Matsumoto"},
-        {id="44",title="怪兽8号",author="Other Author"},
-        {id="45",title="怪兽8号",author="Naoya Matsumoto"},
+        {id="44",title="怪兽8号",anilist_id=999},
+        {id="45",title="另一译名",anilist_id=123},
         {id="46",title="怪兽8号"},
     }}
 end}
 local source = {id="zh",name="Chinese source",lang="zh-Hans"}
-local source_search = matching.search(source_fixture,source,{recommendation,recommendation})
-assert(requests==1 and #source_search["123"].matches==4)
-recommendation.sources={zh=source_search["123"]}
-local matched = matching.matches(recommendation,{source})
-assert(matched[1].item.id=="43" and matched[2].item.id=="44" and matched[3].item.id=="45" and matched[4].item.id=="46")
+local source_search = matching.search(source_fixture,source,recommendation)
+assert(requests==1 and #source_search.matches==1 and source_search.matches[1].id=="45")
+local other_edition = {id="54",title="Kaiju No.8"}
+recommendation.sources={zh=source_search,en={matches={other_edition}}}
+local snapshot = {source_order={"zh","en"}, media=1, items={
+    recommendation, recommendation, {id=125,sources={zh={matches={{id="45",anilist_id=123}}}}},
+}}
+local matched = matching.results(snapshot, "42")
+assert(#matched==1 and matched[1].id=="45")
+snapshot.source_order={"en","zh"}
+matched = matching.results(snapshot, "42")
+assert(#matched==1 and matched[1].id=="54")
 local Chapters = require("suwayomi_kindle/chapters")
 local api = {chapterPage = function(_,_,offset,limit)
     local rows = {}

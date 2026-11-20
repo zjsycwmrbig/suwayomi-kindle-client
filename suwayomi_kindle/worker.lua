@@ -7,13 +7,12 @@ local Worker = {}
 
 function Worker.run(config, action, input)
     if action == "verify" then return Connection.test(config) end
-    if action == "anilist_identify" then return require("suwayomi_kindle/anilist").identify(input.title) end
-    if action == "anilist_recommend" then return require("suwayomi_kindle/anilist").recommend(input.id,input.limit) end
+    if action == "anilist_recommend" then return require("suwayomi_kindle/anilist").recommend(input.id,input.title,input.limit) end
     if action == "scan_downloads" then return require("suwayomi_kindle/tasks").scan(Index.new(config),input.directory) end
     local client, err = Connection.open(config)
     if not client then return nil, err end
     if action == "recommendation_source" then
-        return require("suwayomi_kindle/recommendations").search(client,input.source,input.items,input.bindings)
+        return require("suwayomi_kindle/recommendations").search(client,input.source,input.item)
     end
     if action == "sync_push" then
         return require("suwayomi_kindle/records").push(Index.new(config),client,input.cutoff)

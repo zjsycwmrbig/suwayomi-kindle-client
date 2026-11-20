@@ -1,8 +1,7 @@
 local json = require("dkjson")
 local AniList = {}
 local host = "graphql.anilist.co"
-local fields = [[id format title{english native romaji} synonyms
-    staff(perPage:6){edges{role node{name{full native}}}}]]
+local fields = [[id format title{english native romaji} synonyms]]
 
 local function request(query, variables)
     local https = require("ssl.https")
@@ -54,37 +53,27 @@ end
 
 local function media(row)
     if type(row)~="table" or not tonumber(row.id) or type(row.title)~="table" then return end
-    local authors = {}
-    for _, edge in ipairs(row.staff and row.staff.edges or {}) do
-        local role = tostring(edge.role or ""):lower()
-        if role:find("story",1,true) or role:find("art",1,true) then
-            local name = edge.node and edge.node.name or {}
-            if name.full then authors[#authors+1] = name.full end
-            if name.native and name.native ~= name.full then authors[#authors+1] = name.native end
-        end
-    end
-    return {id=row.id, format=row.format, titles=row.title, synonyms=row.synonyms or {}, authors=authors,
+    return {id=row.id, format=row.format, titles=row.title, synonyms=row.synonyms or {},
         title=row.title.english or row.title.romaji or row.title.native}
 end
 
-function AniList.identify(title, transport)
-    local data, err = (transport or request)([[query($title:String!){Page(perPage:8){media(type:MANGA,
-        format_in:[MANGA,ONE_SHOT],isAdult:false,search:$title){]] .. fields .. [[}}}]], {title=title})
-    if not data or not data.Page then return nil, err or "AniList 未返回作品候选。" end
-    local items = {}
-    for _, row in ipairs(data.Page.media or {}) do
-        local item = media(row)
-        if item and item.title then items[#items+1] = item end
+function AniList.recommend(id, title, limit, transport)
+    local selection = [[id recommendations(page:1,perPage:$limit,sort:RATING_DESC){
+        nodes{mediaRecommendation{type isAdult ]] .. fields .. [[}}}]]
+    local query
+    if id then
+        query = "query($id:Int!,$limit:Int!){Media(id:$id,type:MANGA){" .. selection .. "}}"
+    else
+        query = [[query($title:String!,$limit:Int!){Page(perPage:1){media(type:MANGA,
+            format_in:[MANGA,ONE_SHOT],isAdult:false,search:$title){]] .. selection .. "}}}"
     end
-    return items
-end
-
-function AniList.recommend(id, limit, transport)
-    local data, err = (transport or request)([[query($id:Int!,$limit:Int!){Media(id:$id,type:MANGA){
-        recommendations(page:1,perPage:$limit,sort:RATING_DESC){nodes{mediaRecommendation{type isAdult ]] .. fields .. [[}}}}}]],
-        {id=id,limit=limit})
-    local nodes = data and data.Media and data.Media.recommendations and data.Media.recommendations.nodes
-    if not nodes then return nil, err or "AniList 未返回推荐列表。" end
+    local data, err = (transport or request)(query, {id=id,title=not id and title or nil,limit=limit})
+    if not data then return nil, err end
+    local origin = data.Media or (data.Page and data.Page.media and data.Page.media[1])
+    if not origin then return nil, "AniList 未找到对应作品。" end
+    id = origin.id
+    local nodes = origin.recommendations and origin.recommendations.nodes
+    if not id or not nodes then return nil, "AniList 未返回推荐列表。" end
     local items, seen = {}, {[id]=true}
     for _, node in ipairs(nodes) do
         local row = node.mediaRecommendation
@@ -95,7 +84,7 @@ function AniList.recommend(id, limit, transport)
             items[#items+1] = item
         end
     end
-    return {items=items, media=id}
+    return {items=items, media=id, limit=limit, fetched_at=os.time()}
 end
 
 return AniList

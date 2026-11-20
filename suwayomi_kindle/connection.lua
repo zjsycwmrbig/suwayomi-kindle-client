@@ -46,6 +46,12 @@ local SOURCE_MANGA_QUERY = [[mutation KindleSourceManga($input: FetchSourceManga
     hasNextPage mangas { id title author status description chapters { totalCount } thumbnailUrl inLibrary }
   }
 }]]
+local RECOMMENDATION_QUERY = [[mutation KindleRecommendation($input: FetchSourceMangaInput!) {
+  fetchSourceManga(input: $input) {
+    hasNextPage mangas { id title author status thumbnailUrl inLibrary
+      trackRecords { nodes { remoteId tracker { name } } } }
+  }
+}]]
 local ADD_MUTATION = [[mutation KindleAdd($input: UpdateMangaInput!) {
   updateManga(input: $input) { manga { id inLibrary inLibraryAt } }
 }]]
@@ -318,13 +324,27 @@ function Connection:sources(language)
 end
 
 function Connection:sourcePage(input)
-    local data, err = self:request(SOURCE_MANGA_QUERY, {input = {
+    local query = input.recommendation and RECOMMENDATION_QUERY or SOURCE_MANGA_QUERY
+    local variables = {input = {
         source = input.source.id, type = input.mode, page = input.page, query = input.search,
-    }})
+    }}
+    local data, err = self:request(query, variables)
+    if not data and input.recommendation and err == "服务器接口或字段不兼容。" then
+        data, err = self:request(SOURCE_MANGA_QUERY, variables)
+    end
     local page = data and data.fetchSourceManga
     local rows = page and manga_rows(page.mangas)
     if not rows or type(page.hasNextPage) ~= "boolean" then return nil, err or "漫画列表响应无效。" end
-    for _, item in ipairs(rows) do item.source = input.source.name end
+    for i, item in ipairs(rows) do
+        item.source = input.source.name
+        local records = page.mangas[i].trackRecords
+        for _, record in ipairs(records and records.nodes or {}) do
+            if record.tracker and string_field(record.tracker.name):lower() == "anilist" then
+                item.anilist_id = tonumber(record.remoteId)
+                break
+            end
+        end
+    end
     return {mangas = rows, has_next = page.hasNextPage}
 end
 

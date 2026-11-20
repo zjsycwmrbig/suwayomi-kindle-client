@@ -322,7 +322,12 @@ local function load_posters(home, items)
         home.poster_job = Worker.start(UI, home.settings.connection, "covers", items, function(data)
             if not home.alive or home.poster_key ~= key then return end
             home.poster_job = nil
-            if data and data.changed and not (home.input_form and home.input_form.focused) then home:refresh() end
+            if data and data.changed and not (home.input_form and home.input_form.focused) then
+                if home.detail and #items > 1 and home.cropping_widget and (home.cropping_widget._scroll_offset_y or 0) > 0 then
+                    home.recommendation_scroll = true
+                end
+                home:refresh()
+            end
         end)
     end)
 end
@@ -540,8 +545,8 @@ function Catalog:build_catalog(screen_width, height)
         end}})
     elseif self.directory then self:build_directory(column,width,height)
     elseif self.detail then
-        self:build_detail(column,width)
-        load_posters(self,{self.detail})
+        local posters = self:build_detail(column,width)
+        load_posters(self,posters)
     elseif self.selected_tab == "library" then library(self, column, width, size, grid, poster_height)
     else
         restore_browse_source(self)

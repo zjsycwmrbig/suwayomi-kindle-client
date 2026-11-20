@@ -274,44 +274,39 @@ local recommendation_menu=open()
 for _,action in ipairs(recommendation_menu.actions) do
     if action[1]=="查找相似漫画" then action[2]() end
 end
-assert(last_request.action=="anilist_identify")
-finish_request({{id=90,title="原漫画",titles={},synonyms={},authors={}}})
-assert(last_request.action=="anilist_recommend" and last_request.input.id==90)
+assert(last_request.action=="anilist_recommend" and last_request.input.title=="原漫画")
 assert(last_request.input.limit==5)
 local recommendation_items={}
-for i=1,5 do recommendation_items[i]={id=100+i,title="相似漫画 "..i,titles={},synonyms={},authors={}} end
+for i=1,5 do recommendation_items[i]={id=100+i,title="相似漫画 "..i,titles={},synonyms={}} end
 local pending_sources={}
 worker.start=function(_,_,action,input,done)
     if action=="recommendation_source" then
-        pending_sources[#pending_sources+1]={source=input.source.id,done=done}
-        assert(#input.items==3 and input.bindings==nil)
+        pending_sources[#pending_sources+1]={source=input.source.id,item=input.item.id,done=done}
     elseif action~="covers" then last_request,finish_request={action=action,input=input},done end
     return {cancel=function() end}
 end
-finish_request({media=90,items=recommendation_items})
+finish_request({media=90,items=recommendation_items,limit=5,fetched_at=os.time()})
 assert(#pending_sources==2)
-local requested_sources={[pending_sources[1].source]=true,[pending_sources[2].source]=true}
-assert(requested_sources.a and requested_sources.b)
-local matches={}
-for i=1,5 do matches[i]={id=tostring(583+i),title="推荐漫画 "..i,source="源 B",source_id="b",chapters=10+i} end
-pending_sources[1].done({["101"]={matches=matches}})
-pending_sources[2].done(nil,"超时")
-run_deferred()
-assert(home.pagination and home.pagination.total==2)
-home.pagination.go(2)
-assert(find(home,"label","推荐漫画 5") and #pending_sources==2)
-home.pagination.go(1)
-local recommended_row=assert(find(home,"label","推荐漫画 1") or find(home,"text","推荐漫画 1"))
-if not recommended_row.callback then
-    recommended_row=assert(parent_of(home,recommended_row))
+for i=1,5 do
+    local task=assert(pending_sources[i])
+    assert(task.item==100+i and task.source==pending_sources[1].source)
+    task.done({matches={{id=tostring(583+i),title="推荐漫画 "..i,source_id=task.source,source="源"}}})
+    run_deferred()
 end
+assert(#pending_sources==5 and home.pagination.total==2)
+home:find_recommendations(home:recommendation_state())
+assert(#pending_sources==5 and not home.recommendation_view.jobs)
+home.pagination.go(2)
+assert(find(home,"title","推荐漫画 5"))
+home.pagination.go(1)
+local recommended_row=assert(find(home,"title","推荐漫画 1"))
 recommended_row.callback()
 assert(home.detail.id=="584" and not home.index:recommendationData("584").snapshot)
 home:catalog_back()
 assert(home.detail.id=="84" and home.pagination.page==1)
 home.recommendation_view=nil
 home:refresh()
-assert(home.pagination.total==2 and find(home,"label","推荐漫画 1"))
+assert(home.pagination.total==2 and find(home,"title","推荐漫画 1"))
 home:catalog_back()
 worker.start = worker_start
 
