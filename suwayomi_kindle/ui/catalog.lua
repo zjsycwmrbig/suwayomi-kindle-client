@@ -293,11 +293,16 @@ local function manga_list(home, column, width, items, grid)
         end or nil
         local chapters = item.chapters and (item.chapters .. " 章") or "章节数待刷新"
         local shelf = home.selected_tab == "library"
-        local progress = shelf and Progress.new(item.chapters,item.unread,grid) or nil
         if not shelf and item.unread then chapters = chapters .. " · " .. item.unread .. " 未读" end
         if grid then
             if i % 3 == 1 then tiles = Row:new{}; column[#column + 1] = tiles end
-            tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = chapters, progress=progress,
+            local subtitle, badge, short_badge = chapters
+            if shelf then
+                subtitle = item.author and item.author:match("%S") and item.author or "作者未知"
+                badge, short_badge = require("suwayomi_kindle/progress").badge(item.chapters, item.unread)
+            end
+            tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = subtitle,
+                badge = badge, short_badge = short_badge,
                 poster_height = home.shelf_poster_height, path = Covers.path(home.settings.connection, item), callback = open, hold_callback = continue}
         else
             local path = Covers.path(home.settings.connection, item)
@@ -311,7 +316,7 @@ local function manga_list(home, column, width, items, grid)
             if shelf then chapters = chapters .. " · " .. (item.downloaded or 0) .. " 已下载" end
             column[#column + 1] = SettingRow:new{label = item.title, value = chapters,
                 detail_line = #credits > 0 and table.concat(credits," · ") or nil,
-                leading = poster, trailing=progress, hide_chevron=shelf, width = width, inset=4, leading_width=56, callback = open, hold_callback=continue,
+                leading = poster, trailing=shelf and Progress.new(item.chapters,item.unread) or nil, hide_chevron=shelf, width = width, inset=4, leading_width=56, callback = open, hold_callback=continue,
                 row_height=shelf and 72 or 66}
         end
     end
