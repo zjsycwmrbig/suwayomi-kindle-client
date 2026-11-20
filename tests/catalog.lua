@@ -103,10 +103,20 @@ assert(Chapters.setRead(ix,"9",113,true).unread == 0 and Chapters.nextUnread(ix,
 assert(Chapters.setRead(ix,"9",113,false).unread == 1)
 api.request = function() return {fetchChapterPages={pages={"/p/1","/p/2"},chapter={id=113,manga={id=9}}}} end
 local png = require("mime").unb64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l2kAAAAASUVORK5CYII=")
-api.pageImage = function() return png end
-local sample = {directory=root,id=113,manga="9"}
+local downloads=require("suwayomi_kindle/downloads")
+assert(downloads.enqueue(ix,"9","single",113))
+local sample=assert(downloads.claim(ix))
+sample.directory=root
+local pages_seen={}
+api.pageImage = function(_,url)
+    local task=assert(require("suwayomi_kindle/tasks").page(ix,"queue",1,1,{filter="active"})).rows[1]
+    pages_seen[url]=task.pages_done
+    assert(task.pages_total==2)
+    return png
+end
 local archive = assert(Chapters.download(ix,api,sample)).path
 assert(Chapters.nextUnread(ix,"9").path == archive)
+assert(pages_seen["/p/1"]==0 and pages_seen["/p/2"]==1)
 api.pageImage = function() return "<html>" end
 assert(not Chapters.download(ix,api,sample))
 assert(ix:remove("9"))

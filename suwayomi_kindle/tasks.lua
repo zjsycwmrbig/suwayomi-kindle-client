@@ -12,7 +12,7 @@ end
 local queries = {
     queue = {from = [[queue q LEFT JOIN manga m ON m.id=q.manga
         LEFT JOIN chapter c ON c.manga=q.manga AND c.id=q.id]],
-        fields = "q.manga,q.id,m.title,c.name,q.state,q.error,NULL",
+        fields = "q.manga,q.id,m.title,c.name,q.state,q.error,NULL,q.pages_done,q.pages_total",
         order = "CASE q.state WHEN 'active' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,q.priority,q.rowid"},
     files = {from = [[files f LEFT JOIN manga m ON m.id=f.manga
         LEFT JOIN chapter c ON c.manga=f.manga AND c.id=f.id]],
@@ -40,33 +40,44 @@ end
 function Tasks.page(index,view,page,limit,options)
     options = options or {}
     if view == "orphan" then view,options.file_scope="files","orphan" end
-    local query = assert(queries[view])
     local filter = options.filter or "all"
     assert(filters[filter])
     local scope = options.file_scope or "managed"
-    local from,where,count_from = query.from,queue_where[filter],"queue q"
-    if view == "files" then
-        if scope == "orphan" then
-            from,where,count_from = queries.orphan.from,queue_where.all,"orphan"
-            query = queries.orphan
-        else
-            where = queue_where.all
-            count_from = "files f"
-        end
+    local folders = view=="files" and scope=="managed" and not options.manga
+    local query = assert(queries[scope=="orphan" and view=="files" and "orphan" or view])
+    local count_sql, list_sql
+    local args = {}
+    if folders then
+        count_sql = "SELECT count(DISTINCT manga) FROM files"
+        list_sql = [[SELECT f.manga,NULL,m.title,NULL,'folder',NULL,NULL,count(*)
+            FROM files f LEFT JOIN manga m ON m.id=f.manga GROUP BY f.manga ORDER BY m.title COLLATE NOCASE,f.manga]]
+    else
+        local where = ""
+        if view=="queue" and queue_where[filter] then where = " WHERE " .. queue_where[filter]
+        elseif view=="files" and scope=="managed" then where,args = " WHERE f.manga=?",{options.manga} end
+        local base = view=="queue" and "queue q" or scope=="orphan" and "orphan" or "files f"
+        count_sql = "SELECT count(*) FROM " .. base .. where
+        list_sql = "SELECT " .. query.fields .. " FROM " .. query.from .. where .. " ORDER BY " .. query.order
     end
     return index:with_db(function(db)
         db:exec("BEGIN")
-        local count = tonumber(db:rowexec("SELECT count(*) FROM " .. count_from
-            .. (where and " WHERE " .. where or "")))
+        local counter = db:prepare(count_sql)
+        if #args>0 then counter:bind(args[1]) end
+        local count = tonumber(counter:step()[1])
         local pages = math.max(1,math.ceil(count/limit))
         page = math.min(pages,math.max(1,page))
-        local stmt = db:prepare("SELECT " .. query.fields .. " FROM " .. from
-            .. (where and " WHERE " .. where or "") ..
-            " ORDER BY " .. query.order .. " LIMIT ? OFFSET ?"):bind(limit,(page-1)*limit)
+        args[#args+1] = limit
+        args[#args+1] = (page-1)*limit
+        local stmt = db:prepare(list_sql .. " LIMIT ? OFFSET ?"):bind(unpack(args))
         local rows = {}
         for r in stmt:rows() do
             local item = {manga=r[1],id=tonumber(r[2]),title=r[3],name=r[4],state=r[5],reason=r[6],path=r[7]}
-            if scope == "orphan" then item.key="orphan:" .. item.path
+            if folders then
+                item.key,item.file_count = "folder:" .. item.manga,tonumber(r[8])
+            elseif view=="queue" then
+                item.key,item.error = "queue:" .. item.manga .. ":" .. item.id,r[6]
+                item.pages_done,item.pages_total = tonumber(r[8]),tonumber(r[9])
+            elseif scope == "orphan" then item.key="orphan:" .. item.path
             elseif item.manga and item.id then item.key=view .. ":" .. item.manga .. ":" .. item.id end
             rows[#rows+1] = item
         end
@@ -114,6 +125,29 @@ function Tasks.retry(index,selections)
     end)
 end
 
+-- Freeze the exact paths covered by a confirmation. Files added later are
+-- outside that selection, even when they belong to one of the chosen folders.
+function Tasks.expandFiles(index,selection)
+    return index:with_db(function(db)
+        db:exec("BEGIN")
+        local files,seen = {},{}
+        local function add(item)
+            if item.path and not seen[item.path] then
+                files[#files+1],seen[item.path] = item,true
+            end
+        end
+        local stmt = db:prepare("SELECT id,path FROM files WHERE manga=?")
+        for _,item in pairs(selection) do
+            if item.state=="folder" then
+                for row in stmt:reset():bind(item.manga):rows() do
+                    add({manga=item.manga,id=tonumber(row[1]),path=row[2]})
+                end
+            else add(item) end
+        end
+        return files
+    end)
+end
+
 local function normalized(path)
     return path and path:gsub("/+$","")
 end
@@ -146,9 +180,16 @@ function Tasks.deleteFiles(index,selections,root,open_path)
                     =="/Suwayomi/"..scope.."/"..item.manga.."/"..item.id..".cbz"
             elseif acceptable then acceptable=inside(path,root) end
             local stat=acceptable and lfs.symlinkattributes(path)
+            local stamp
+            if stat and item.manga and item.id then
+                stamp=db:prepare("SELECT bytes,mtime,inode FROM file_stamp WHERE manga=? AND id=?")
+                    :bind(item.manga,item.id):step()
+            end
+            local replaced=stamp and (tonumber(stamp[1])~=stat.size or tonumber(stamp[2])~=stat.modification
+                or stamp[3]~=tostring(stat.ino))
             if path==open_path then
                 kept=kept+1
-            elseif not acceptable or not stat or stat.mode~="file" then
+            elseif not acceptable or not stat or stat.mode~="file" or replaced then
                 failed=failed+1
             elseif os.remove(path) then
                 if item.manga and item.id then

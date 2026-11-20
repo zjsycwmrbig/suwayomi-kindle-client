@@ -78,13 +78,14 @@ saved = assert(settings_store:mark_verified(saved))
 assert(settings_store:is_verified(saved))
 saved.password = "changed"
 assert(not settings_store:is_verified(saved))
-equal(settings_store:load("download").retention, "never")
+equal(settings_store:load("download").retention, "1")
 assert(settings_store:update("browse", {language = "en", view_mode = "grid"}))
 assert(settings_store:update("library", {view_mode = "list"}))
 for _, policy in ipairs({"0", "1", "3", "5", "10", "never"}) do
-    assert(settings_store:update("download", {max_parallel = 3, retention = policy, directory = "/tmp/books"}))
+    assert(settings_store:update("download", {max_parallel = 5, retention = policy, directory = "/tmp/books"}))
     equal(SettingsStore:new{root = root}:load("download").retention, policy)
 end
+equal(settings_store:load("download").max_parallel, 5)
 equal(settings_store:load("browse").language, "en")
 equal(settings_store:load("connection").password, "secret")
 for _, section in ipairs({"browse", "download", "connection", "library"}) do

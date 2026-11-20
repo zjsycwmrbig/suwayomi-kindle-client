@@ -13,7 +13,7 @@ local Icons = require("suwayomi_kindle/ui/icons")
 local Tile = Input:extend{}
 function Tile:init()
     local screen = Device.screen
-    local poster_h = screen:scaleBySize(114)
+    local poster_h = self.poster_height or screen:scaleBySize(114)
     local poster_w = math.min(self.width - 4, math.floor(poster_h * 0.71))
     local cover = self.path and Image:new{original_in_nightmode = true, file = self.path, width = poster_w, height = poster_h}
         or Icons.widget("library", screen:scaleBySize(36))

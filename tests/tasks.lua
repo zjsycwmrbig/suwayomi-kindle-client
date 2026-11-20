@@ -69,8 +69,12 @@ for page=1,2 do
     for _,item in ipairs(Tasks.page(ix,"orphan",page,2).rows) do reasons[item.reason]=true end
 end
 assert(reasons["漫画不在书架"] and reasons["章节不在目录"] and reasons["本地文件未登记"])
-local files=Tasks.page(ix,"files",1,10)
-assert(files.count==3)
+local folders=assert(Tasks.page(ix,"files",1,10))
+assert(folders.count==2)
+local expanded=assert(Tasks.expandFiles(ix,folders.rows))
+assert(#expanded==3)
+local files=assert(Tasks.page(ix,"files",1,10,{manga="7"}))
+assert(files.count==2)
 local selected
 for _,item in ipairs(files.rows) do
     if item.manga=="7" and item.id==50 then selected=item end
@@ -80,11 +84,16 @@ local deleted=assert(Tasks.deleteFiles(ix,{[selected.key]=selected},root))
 assert(deleted.count==1 and lfs.attributes(path("7",50),"mode")==nil)
 assert(Tasks.page(ix,"files",1,10).count==2)
 local guarded
-for _,item in ipairs(Tasks.page(ix,"files",1,10).rows) do
+for _,item in ipairs(Tasks.page(ix,"files",1,10,{manga="7"}).rows) do
     if item.manga=="7" and item.id==99 then guarded=item end
 end
 local kept=assert(Tasks.deleteFiles(ix,{[guarded.key]=guarded},root,guarded.path))
 assert(kept.kept==1 and lfs.attributes(guarded.path,"mode")=="file")
+local all=assert(Tasks.expandFiles(ix,Tasks.page(ix,"files",1,10).rows))
+assert(#all==2)
+local bulk=assert(Tasks.deleteFiles(ix,all,root,guarded.path))
+assert(bulk.count==1 and bulk.kept==1 and bulk.failed==0)
+assert(lfs.attributes(root.."/extra/x.CBZ","mode")=="file")
 assert(not Tasks.scan(ix,tmp.."/missing"))
 assert(Tasks.page(ix,"orphan",1,5).count==3)
 require("ffi/util").purgeDir(tmp)

@@ -158,6 +158,21 @@ function Chapters.download(index, client, input)
     if not writer:open(tmp, "zip") then return nil, "无法创建章节文件，请检查下载目录。" end
     writer:setZipCompression("store")
     local page_number,page_error = 0,nil
+    -- Publish only completed CBZ entries. A superseded worker cannot update its replacement.
+    local last_report
+    local function report(done, force)
+        if not input.ticket then return end
+        local now = os.time()
+        if not force and now == last_report then return end
+        last_report = now
+        index:with_db(function(db)
+            db:prepare([[UPDATE queue SET pages_done=?, pages_total=?
+                WHERE manga=? AND id=? AND state='active' AND ticket=?]])
+                :bind(done,#result.pages,manga,id,input.ticket):step()
+            return true
+        end)
+    end
+    report(0,true)
     local ok = pcall(function()
         for i, url in ipairs(result.pages) do
             page_number = i
@@ -165,6 +180,7 @@ function Chapters.download(index, client, input)
             bytes,page_error = client:pageImage(url)
             local ext = assert(image_type(bytes))
             assert(writer:addFileFromMemory(string.format("%05d.%s",i,ext),bytes))
+            report(i,i==1 or i==#result.pages)
         end
     end)
     writer:close()

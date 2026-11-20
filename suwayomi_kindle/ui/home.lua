@@ -87,6 +87,7 @@ function Home:handleEvent(event)
 end
 
 function Home:onCloseWidget()
+    if self.task_progress_timer then UIManager:unschedule(self.task_progress_timer); self.task_progress_timer=nil end
     require("suwayomi_kindle/queue").detach(self.index,self)
     require("suwayomi_kindle/sync_service").detach(self.index,self)
     self:close_drawer()
@@ -147,7 +148,7 @@ function Home:page_title()
             or self.settings_route == "browse" and "浏览"
             or "设置"
     elseif self.selected_tab == "tasks" then
-        return "下载任务"
+        return self.task_folder and (self.task_folder.title or ("漫画 " .. self.task_folder.manga)) or "下载任务"
     elseif self.directory then
         return self.directory.unread_only and "未读章节" or "全部章节"
     elseif self.detail then
@@ -182,6 +183,8 @@ function Home:refresh()
             self.settings_route = self.settings_route == "languages" and "browse" or "index"
             self:refresh()
         end
+    elseif self.selected_tab=="tasks" and self.task_folder then
+        on_back=function() self:leave_task_folder() end
     elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
         on_back = function() self:catalog_back() end
     end

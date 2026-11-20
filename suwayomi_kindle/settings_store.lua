@@ -11,7 +11,7 @@ local defaults = {
     connection = {server_url = "", auth_method = "none", username = "", password = "",
         last_verified_credential_hash = "", last_verified_at = 0},
     theme = {mode = "day"},
-    download = {directory = "", max_parallel = 1, retention = "never"},
+    download = {directory = "", max_parallel = 1, retention = "1"},
     library = {view_mode = "list"},
     browse = {view_mode = "list", language = "zh"},
 }

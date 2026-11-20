@@ -89,7 +89,9 @@ function Manga:open_local(path)
         local ReaderUI=require("apps/reader/readerui")
         local current=ReaderUI.instance
         if current and current.document then
-            if current.document.file~=path then current:switchDocument(path,true) end
+            if current.document.file~=path then
+                require("suwayomi_kindle/reader_navigation").switchDocument(current,path)
+            end
         else ReaderUI:showReader(path) end
     end)
 end
@@ -237,8 +239,12 @@ function Manga:build_directory(column,width,height)
         if row.scanlator ~= "" then state = state .. " · " .. row.scanlator end
         if row.id == dir.target then state = "▶  " .. state end
         local busy=row.state=="queued" or row.state=="active"
-        local label=row.path and "阅读" or row.state=="queued" and "排队中"
-            or row.state=="active" and "下载中" or row.state=="failed" and "重试" or row.state=="paused" and "继续" or "下载"
+        local icon = row.path and "book_open" or busy and "clock" or row.state=="failed" and "refresh"
+            or row.state=="paused" and "play" or "download"
+        if not row.path and row.state then
+            local status = {queued="排队中",active="下载中",failed="下载失败",paused="已暂停"}
+            state = state .. " · " .. (status[row.state] or row.state)
+        end
         if row.error and row.state=="failed" then state=state .. " · " .. row.error end
         local function primary()
             if self.reader_origin then
@@ -250,11 +256,14 @@ function Manga:build_directory(column,width,height)
                 Queue.pause(q,false,{manga=self.detail.id,id=row.id})
             elseif not busy then self:queue_chapters("single",row.id); self:refresh() end
         end
-        local button_w,more_w=scale(64),scale(42)
+        local IconButton = require("suwayomi_kindle/ui/header").IconButton
+        local button_w,more_w=scale(46),scale(42)
         column[#column+1]=Row:new{
-            SettingRow:new{width=width-button_w-more_w,hide_chevron=true,label=row.name,value=state,callback=primary},
-            Button.new{text=label,width=button_w,compact=true,enabled=not busy,show_parent=self,callback=primary},
-            require("suwayomi_kindle/ui/header").IconButton:new{icon_name="chevron_right",
+            SettingRow:new{width=width-button_w-more_w,hide_chevron=true,muted=row.read,leading=Icons.widget(row.read and "read" or "unread",scale(17)),
+                inset=4,leading_width=28,label=row.name,value=state,callback=primary},
+            IconButton:new{icon_name=icon,dimen=require("ui/geometry"):new{w=button_w,h=scale(66)},
+                callback=(row.path or not busy) and primary or nil},
+            IconButton:new{icon_name="chevron_right",
                 dimen=require("ui/geometry"):new{w=more_w,h=scale(66)},callback=function() self:chapter_actions(row) end},
         }
     end

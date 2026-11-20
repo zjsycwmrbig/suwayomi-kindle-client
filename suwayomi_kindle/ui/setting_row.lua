@@ -31,15 +31,16 @@ local SettingRow = InputContainer:extend{
 
 function SettingRow:init()
     local function scale(px) return Screen:scaleBySize(px) end
-    local height = scale(self.single_line and 40 or 66)
-    local horizontal_padding = scale(18)
+    local height = scale(self.row_height or (self.single_line and 40 or 66))
+    local horizontal_padding = scale(self.inset or 18)
     local chevron_size = scale(20)
-    local leading_width = self.leading and scale(52) or 0
+    local leading_width = self.leading and scale(self.leading_width or 52) or 0
     local left_width = self.width - leading_width - 2 * horizontal_padding
         - ((self.single_line or self.hide_chevron) and 0 or chevron_size + scale(12))
     local label = TextWidget:new{
         text = self.label,
-        face = Font:getFace("smallinfofontbold", 18),
+        face = Font:getFace(self.muted and "smallinfofont" or "smallinfofontbold", 18),
+        fgcolor = self.muted and Blitbuffer.COLOR_DARK_GRAY or Blitbuffer.COLOR_BLACK,
         max_width = left_width,
     }
     local content = label
@@ -48,6 +49,10 @@ function SettingRow:init()
             TextWidget:new{text = self.value or "", face = Font:getFace("x_smallinfofont", 15),
                 max_width = left_width, fgcolor = Blitbuffer.COLOR_DARK_GRAY},
         }
+        if self.detail_line then
+            content[#content+1] = TextWidget:new{text=self.detail_line, face=Font:getFace("x_smallinfofont",14),
+                max_width=left_width, fgcolor=Blitbuffer.COLOR_DARK_GRAY}
+        end
     end
     local left = LeftContainer:new{dimen = Geom:new{w = left_width, h = height}, content}
     self.dimen = Geom:new{

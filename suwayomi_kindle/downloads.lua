@@ -58,7 +58,7 @@ function Downloads.claim(index)
         if row then
             db:exec("UPDATE queue_control SET serial=serial+1")
             job = {manga=row[1],id=tonumber(row[2]),ticket=tonumber(db:rowexec("SELECT serial FROM queue_control"))}
-            db:prepare("UPDATE queue SET state='active',error=NULL,ticket=? WHERE manga=? AND id=?"):bind(job.ticket,job.manga,job.id):step()
+            db:prepare("UPDATE queue SET state='active',error=NULL,pages_done=NULL,pages_total=NULL,ticket=? WHERE manga=? AND id=?"):bind(job.ticket,job.manga,job.id):step()
         end
         db:exec("COMMIT")
         return job or false
@@ -78,7 +78,7 @@ end
 
 -- Only unlink indexed CBZs in this account's managed namespace. Retain
 -- KOReader sidecars and progress. Defer the current reader's file until close.
-function Downloads.clean(index,manga,global,manual,open_path)
+function Downloads.clean(index,manga,global,manual,open_path,destination)
     local policy,err = Downloads.policy(index,manga)
     if not policy then return nil,err end
     local keep = manual and 0 or tonumber(policy.retention == "inherit" and global or policy.retention)
@@ -104,7 +104,7 @@ function Downloads.clean(index,manga,global,manual,open_path)
                 forget:reset():bind(manga,r.id,r.path):step()
             elseif r.path:sub(-#suffix)~=suffix or mode~="file" or replaced then failed=failed+1
             elseif kept<keep then kept=kept+1
-            elseif r.path~=open_path then
+            elseif r.path~=open_path and r.path~=destination then
                 if os.remove(r.path) then
                     forget:reset():bind(manga,r.id,r.path):step()
                     count=count+1

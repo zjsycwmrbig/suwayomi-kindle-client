@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(300)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 5 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 6 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -61,7 +61,11 @@ local function with_db(index, action)
                     CREATE TABLE orphan(path TEXT PRIMARY KEY,reason TEXT NOT NULL);
                     CREATE TABLE scan_status(at INTEGER);]])
             end
-            db:exec("PRAGMA user_version=5; COMMIT")
+            if version < 6 then
+                db:exec([[ALTER TABLE queue ADD COLUMN pages_done INTEGER;
+                    ALTER TABLE queue ADD COLUMN pages_total INTEGER;]])
+            end
+            db:exec("PRAGMA user_version=6; COMMIT")
         end
         return action(db)
     end)
@@ -120,12 +124,13 @@ function Index:page(page, limit)
         local count, synced = db:rowexec("SELECT count,synced FROM shelf")
         count, synced = tonumber(count), tonumber(synced)
         page = math.max(1, math.min(page, math.ceil(count / limit)))
-        local stmt = db:prepare([[SELECT id,title,author,source,thumbnail,chapters,unread FROM manga
+        local stmt = db:prepare([[SELECT id,title,author,source,thumbnail,chapters,unread,
+            (SELECT count(*) FROM files WHERE files.manga=manga.id) FROM manga
             ORDER BY title COLLATE NOCASE,id LIMIT ? OFFSET ?]]):bind(limit, (page - 1) * limit)
         local items = {}
         for r in stmt:rows() do
             items[#items + 1] = {id = r[1], title = r[2], author = r[3], source = r[4],
-                thumbnail = r[5], chapters = tonumber(r[6]), unread = tonumber(r[7]), in_library = true}
+                thumbnail = r[5], chapters = tonumber(r[6]), unread = tonumber(r[7]), downloaded = tonumber(r[8]), in_library = true}
         end
         return {count = count, synced = synced, page = page, items = items}
     end)

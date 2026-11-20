@@ -44,7 +44,7 @@ function Catalog:reset_catalog()
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
     self.shelf_page, self.index = 1, nil
     self.task_page,self.task_view,self.task_message=1,"queue",nil
-    self.task_filter,self.task_file_scope="all","managed"
+    self.task_filter,self.task_file_scope,self.task_folder="all","managed",nil
     self.task_selection,self.task_editing={},false
 end
 
@@ -266,13 +266,22 @@ local function manga_list(home, column, width, items, grid)
         if grid then
             if i % 3 == 1 then tiles = Row:new{}; column[#column + 1] = tiles end
             tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = chapters,
-                path = Covers.path(home.settings.connection, item), callback = open}
+                poster_height = home.shelf_poster_height, path = Covers.path(home.settings.connection, item), callback = open}
         else
             local path = Covers.path(home.settings.connection, item)
-            local poster = path and Image:new{original_in_nightmode = true, file = path, width = scale(40), height = scale(56)}
+            local shelf = home.selected_tab == "library"
+            local poster = path and Image:new{original_in_nightmode = true, file = path,
+                width = scale(shelf and 46 or 40), height = scale(shelf and 65 or 56)}
                 or Icons.widget("library", scale(28))
-            column[#column + 1] = SettingRow:new{label = item.title, value = chapters .. "  " .. (item.author ~= "" and item.author or item.source),
-                leading = poster, width = width, callback = open}
+            local credits = {}
+            for _,key in ipairs({"author","source"}) do
+                if item[key] and item[key] ~= "" then credits[#credits+1] = item[key] end
+            end
+            if shelf then chapters = chapters .. " · " .. (item.downloaded or 0) .. " 已下载" end
+            column[#column + 1] = SettingRow:new{label = item.title, value = chapters,
+                detail_line = #credits > 0 and table.concat(credits," · ") or nil,
+                leading = poster, width = width, inset=4, leading_width=56, callback = open,
+                row_height=shelf and 72 or 66}
         end
     end
     load_posters(home, items)
@@ -367,6 +376,19 @@ function Catalog:build_catalog(screen_width, height)
     if self.browse.source and self.selected_tab == "browse" and not self.detail then
         size = grid and 3 * math.max(1,math.floor((height-scale(132))/scale(172)))
             or math.max(1,math.floor((height-scale(132))/scale(66)))
+    end
+    self.shelf_poster_height = nil
+    if self.selected_tab == "library" and not self.detail then
+        local available = height - scale((self.pending or self.catalog_message) and 76 or 46)
+        if grid then
+            local ideal = math.floor((width / 3 - scale(10)) / 0.71)
+            local captions = scale(54)
+            local rows = math.max(1, math.floor(available / (ideal + captions) + 0.5))
+            self.shelf_poster_height = math.max(1,math.min(ideal,math.floor(available / rows) - captions))
+            size = rows * 3
+        else
+            size = math.max(1,math.floor(available / scale(72)))
+        end
     end
     self.catalog_size = size
     if not self.directory then note(column, width, self.pending and "正在从服务器获取数据…" or self.catalog_message) end

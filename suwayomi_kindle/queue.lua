@@ -37,7 +37,7 @@ function Queue.start(q,resume)
     UI:nextTick(function()
         q.scheduled=false
         local started=false
-        while not q.waiting and q.active < (tonumber(q.settings.max_parallel) or 1) do
+        while not q.waiting and q.active < math.min(5, tonumber(q.settings.max_parallel) or 1) do
             local job = Downloads.claim(q.index)
             if not job then break end
             job.directory = Tasks.directory(q.settings.directory)

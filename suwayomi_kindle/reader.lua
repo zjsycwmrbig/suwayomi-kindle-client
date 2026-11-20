@@ -45,11 +45,13 @@ function Reader:onCloseDocument()
     if not result then require("suwayomi_kindle/records").log(row.index,"保存阅读进度失败 · " .. err); return end
     if result.changes>0 then require("suwayomi_kindle/sync_service").schedule(row.index,row.config) end
     local settings=self.settings_store:load("download")
+    local destination=self.ui.suwayomi_next_file
+    self.ui.suwayomi_next_file=nil
     require("ui/uimanager"):nextTick(function()
         local downloads=require("suwayomi_kindle/downloads")
         local reader=require("apps/reader/readerui").instance
         local active=reader and reader.document and reader.document.file
-        downloads.clean(row.index,row.manga,settings.retention,false,active)
+        downloads.clean(row.index,row.manga,settings.retention,false,active,destination)
         downloads.enqueue(row.index,row.manga,"auto")
         local queue=require("suwayomi_kindle/queue")
         queue.start(queue.attach(row.index,row.config,settings))

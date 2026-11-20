@@ -174,10 +174,10 @@ function methods:build_download_settings(screen_width, body_height)
         SettingRow:new{label = "下载位置", value = cfg.directory == "" and "KOReader 书库" or cfg.directory,
             width = width, callback = function() self:choose_download_directory() end},
         rule(width),
-        stepper(self, width, "并行下载", {{1,"1"},{2,"2"},{3,"3"}}, cfg.max_parallel,
+        stepper(self, width, "并行下载", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"}}, cfg.max_parallel,
             function(v) save_section(self, "download", {max_parallel = v}) end),
         rule(width),
-        stepper(self, width, "已读后保留", policies, cfg.retention,
+        stepper(self, width, "全局已读删除策略", policies, cfg.retention,
             function(v) save_section(self, "download", {retention = v}) end),
         rule(width),
     }

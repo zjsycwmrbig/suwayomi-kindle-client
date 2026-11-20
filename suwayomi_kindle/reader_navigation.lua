@@ -16,6 +16,13 @@ end
 
 Navigation.cancel = cancel_intent
 
+-- KOReader closes the outgoing document before opening the destination on a
+-- later UI tick. Its close hook must protect that destination during cleanup.
+function Navigation.switchDocument(reader,path,after_open)
+    reader.suwayomi_next_file=path
+    reader:switchDocument(path,true,after_open)
+end
+
 function Navigation.select(plugin,chapter,from_end)
     local origin=plugin.reading_chapter
     if not origin or chapter.id==origin.id then return end
@@ -32,7 +39,7 @@ function Navigation.select(plugin,chapter,from_end)
             if require("libs/libkoreader-lfs").attributes(path,"mode")~="file" then notice("章节文件已移走。"); return end
             local first_page
             if from_end then first_page=function(reader) reader.paging:onGotoPage(1) end end
-            plugin.ui:switchDocument(path,true,first_page)
+            Navigation.switchDocument(plugin.ui,path,first_page)
         end)
     end
     if chapter.path then open(chapter.path); return end

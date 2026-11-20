@@ -108,26 +108,66 @@ local function retry_selected(home,data)
     home:refresh()
 end
 
-local function delete_selected(home)
-    local selected=selection_items(home.task_selection)
+local function delete_selected(home,items)
+    local index=home:local_index()
+    local selected,err=Tasks.expandFiles(index,items or selection_items(home.task_selection))
+    if not selected then notice(err); return end
     if #selected==0 then notice("请先选择下载文件。"); return end
+    local root=Tasks.directory(home.settings.download.directory)
     UI:show(require("ui/widget/confirmbox"):new{
-        text=string.format("删除所选 %d 个本地文件？阅读记录会保留。",#selected),
+        text=string.format("删除所选 %d 个本地章节文件？阅读记录会保留。",#selected),
         ok_callback=function()
-            local reader=require("apps/reader/readerui").instance
-            local path=reader and reader.document and reader.document.file
-            local result,err=Tasks.deleteFiles(home:local_index(),selected,
-                Tasks.directory(home.settings.download.directory),path)
-            if not result then notice(err)
-            else
-                notice(string.format("已删除 %d 个文件，失败 %d 个，占用中 %d 个",
-                    result.count,result.failed,result.kept))
+            local count,failed,kept,at=0,0,0,1
+            local function step()
+                local batch={}
+                for i=at,math.min(#selected,at+31) do batch[#batch+1]=selected[i] end
+                local reader=require("apps/reader/readerui").instance
+                local path=reader and reader.document and reader.document.file
+                local result,why=Tasks.deleteFiles(index,batch,root,path)
+                if not result then notice(why); return end
+                count,failed,kept=count+result.count,failed+result.failed,kept+result.kept
+                at=at+#batch
+                if at<=#selected then UI:nextTick(step); return end
+                notice(string.format("已删除 %d 个文件，失败 %d 个，占用中 %d 个",count,failed,kept))
+                if home.alive and home.index==index then
+                    clear_selection(home)
+                    home:refresh()
+                end
             end
-            clear_selection(home)
-            home.task_page=1
-            home:refresh()
+            step()
         end,
     })
+end
+
+function Page:leave_task_folder()
+    self.task_page,self.task_folder=self.task_folder_page or 1,nil
+    clear_selection(self)
+    self:refresh()
+end
+
+local function file_menu(home,item,label)
+    local dialog
+    local function action(text,fn)
+        return {{text=text,callback=function() UI:close(dialog); fn() end}}
+    end
+    local folder=item.state=="folder"
+    local buttons={}
+    if folder then
+        buttons[1]=action("查看章节文件",function()
+            home.task_folder_page,home.task_folder,home.task_page=home.task_page,item,1
+            clear_selection(home)
+            home:refresh()
+        end)
+    elseif item.state=="orphan" then
+        buttons[1]=action("查看文件信息",function() notice(item.reason .. "\n" .. item.path) end)
+    else buttons[1]=action("阅读本章",function() open_file(home,item) end) end
+    buttons[#buttons+1]=action(folder and "多选文件夹" or "多选文件",function()
+        home.task_editing,home.task_selection=true,{}
+        toggle_selection(home,item)
+    end)
+    buttons[#buttons+1]=action(folder and "删除此漫画的下载" or "删除文件",function() delete_selected(home,{item}) end)
+    dialog=require("ui/widget/buttondialog"):new{title=label,buttons=buttons}
+    UI:show(dialog)
 end
 
 local function select_page(home,rows)
@@ -171,7 +211,7 @@ function Page:task_actions()
         }
     end
     local actions={
-        {icon="check",file_scope=="orphan" and "选择孤立文件" or "选择文件",function()
+        {icon="check",file_scope=="orphan" and "选择孤立文件" or self.task_folder and "选择文件" or "选择文件夹",function()
             self.task_selection,self.task_editing={},true
             self:refresh()
         end},
@@ -191,7 +231,7 @@ function Page:task_actions()
     else
         actions[#actions+1]={icon="warning","扫描孤立下载",function()
             if self.pending=="scan_downloads" then return end
-            self.task_file_scope,self.task_page,self.task_message="orphan",1,nil
+            self.task_file_scope,self.task_page,self.task_message,self.task_folder="orphan",1,nil,nil
             clear_selection(self)
             self:refresh()
             self:request_catalog("scan_downloads",{directory=Tasks.directory(self.settings.download.directory)},function(result)
@@ -205,6 +245,36 @@ function Page:task_actions()
         end}
     end
     return actions
+end
+
+-- Poll only while this page shows an active attempt. Compare the small active
+-- set first so an unchanged counter does not repaint an e-ink screen.
+local function watch_progress(home)
+    if home.task_progress_timer then return end
+    local function poll()
+        home.task_progress_timer=nil
+        if not home.alive or home.selected_tab~="tasks" or (home.task_view or "queue")~="queue" then return end
+        local visible={}
+        for _,item in ipairs(home.task_rows or {}) do
+            if item.state=="active" then visible[item.key]=item end
+        end
+        if not next(visible) then return end
+        if UI:getTopmostVisibleWidget()==home then
+            local changed=home:local_index():with_db(function(db)
+                for row in db:prepare("SELECT manga,id,pages_done,pages_total FROM queue WHERE state='active'"):rows() do
+                    local key="queue:" .. row[1] .. ":" .. tonumber(row[2])
+                    local item=visible[key]
+                    if item and (item.pages_done~=tonumber(row[3]) or item.pages_total~=tonumber(row[4])) then return true end
+                    visible[key]=nil
+                end
+                return next(visible)~=nil
+            end)
+            if changed then home:refresh(); return end
+        end
+        watch_progress(home)
+    end
+    home.task_progress_timer=poll
+    UI:scheduleIn(1.5,poll)
 end
 
 function Page:build_tasks(screen_width,height)
@@ -226,7 +296,7 @@ function Page:build_tasks(screen_width,height)
             show_parent=self,callback=function()
                 if view~=option.id then
                     self.task_view,self.task_page,self.task_message=option.id,1,nil
-                    self.task_file_scope="managed"
+                    self.task_file_scope,self.task_folder="managed",nil
                     clear_selection(self)
                     self:refresh()
                 end
@@ -252,11 +322,20 @@ function Page:build_tasks(screen_width,height)
         column[#column+1]=Space:new{width=scale(8)}
     end
 
+    local reserved=scale(view=="queue" and 98 or 60)+(self.task_editing and scale(46) or 0)
+    local limit=math.max(1,math.floor((height-reserved)/scale(66)))
+    local data,err
+    if self.settings.connection.server_url=="" then
+        err="请先在设置中选择服务器。"
+    else
+        data,err=Tasks.page(self:local_index(),view,self.task_page or 1,limit,
+            {filter=self.task_filter,file_scope=file_scope,manga=self.task_folder and self.task_folder.manga})
+    end
     if self.task_editing then
         local selected=selection_count(self)
         local selected_w=scale(96)
         local button_w=math.floor((width-selected_w-scale(12))/2)
-        local rows=self.task_rows or {}
+        local rows=data and data.rows or {}
         local all=#rows>0
         for _,item in ipairs(rows) do if not self.task_selection[item.key] then all=false; break end end
         column[#column+1]=Row:new{
@@ -276,15 +355,6 @@ function Page:build_tasks(screen_width,height)
         column[#column+1]=Space:new{width=scale(8)}
     end
 
-    local reserved=scale(84)+(self.task_editing and scale(46) or 0)
-    local limit=math.max(1,math.floor((height-reserved)/scale(66)))
-    local data,err
-    if self.settings.connection.server_url=="" then
-        err="请先在设置中选择服务器。"
-    else
-        data,err=Tasks.page(self:local_index(),view,self.task_page or 1,limit,
-            {filter=self.task_filter,file_scope=file_scope})
-    end
     if not data then
         column[#column+1]=Text:new{width=width,text=err,face=Font:getFace("smallinfofont",16)}
     else
@@ -301,20 +371,30 @@ function Page:build_tasks(screen_width,height)
             column[#column+1]=Space:new{width=scale(6)}
         end
         for _,item in ipairs(data.rows) do
+            if item.state=="active" then watch_progress(self) end
             local selected=self.task_selection and self.task_selection[item.key]
             local label,value
             if file_scope=="orphan" and view=="files" then
                 label=(item.path:match("[^/]+$") or item.path)
                 value=item.reason .. " · " .. (item.path:match("^(.*)/[^/]+$") or item.path)
+            elseif item.state=="folder" then
+                label=item.title or ("漫画 " .. item.manga)
+                value=string.format("%d 个章节文件",item.file_count)
+            elseif view=="files" then
+                label=item.name or ("章节 " .. item.id)
+                value=item.path:match("[^/]+$") or item.path
             else
                 label=item.title or ("漫画 " .. tostring(item.manga))
                 local state=data.paused and item.state=="queued" and "已暂停" or states[item.state] or item.state or ""
                 value=(item.name or ("章节 " .. tostring(item.id))) .. " · " .. state
+                if item.pages_total and item.state=="active" then
+                    value=value .. string.format(" · 已写入 %d/%d 页",item.pages_done,item.pages_total)
+                end
                 if item.error and item.error~="" then value=value .. " · " .. item.error end
             end
             if self.task_editing then label=(selected and "☑  " or "☐  ") .. label end
             column[#column+1]=SettingRow:new{width=width,label=label,value=value,
-                leading=selected and Icons.widget("check",scale(18)) or nil,
+                leading=selected and Icons.widget("check",scale(18)) or item.state=="folder" and Icons.widget("folder",scale(23)) or nil,
                 callback=function()
                     if self.task_editing then toggle_selection(self,item)
                     elseif view=="queue" then
@@ -328,9 +408,7 @@ function Page:build_tasks(screen_width,height)
                                 if not ok then notice(why) end
                             end}}}}
                         UI:show(dialog)
-                    elseif file_scope=="orphan" then
-                        notice(item.reason .. "\n" .. item.path)
-                    else open_file(self,item) end
+                    else file_menu(self,item,label) end
                 end}
         end
     end
