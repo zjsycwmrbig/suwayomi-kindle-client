@@ -45,10 +45,11 @@ function Manga:refresh_detail(on_open)
     self:request_catalog("detail",{id=item.id},function(data)
         for key,value in pairs(data) do item[key] = value end
         local saved = require("suwayomi_kindle/library_index").new(self.settings.connection)
-        saved:with_db(function(db)
-            db:prepare("UPDATE manga SET anilist_id=? WHERE id=?"):bind(data.anilist_id,item.id):step()
-            return true
-        end)
+        if data.anilist_id ~= nil then
+            saved:setAnilistId(item.id,data.anilist_id)
+        elseif data.anilist_supported then
+            saved:setAnilistId(item.id,nil)
+        end
         auto_search()
     end, auto_search)
 end
@@ -65,6 +66,9 @@ function Manga:build_detail(column,width)
     paragraph(meta,text_width,MangaStatus.label(item.status),15)
     if item.author and item.author ~= "" then paragraph(meta,text_width,item.author,16) end
     if item.source and item.source ~= "" then paragraph(meta,text_width,item.source,15) end
+    if item.anilist_supported == false and item.anilist_id == nil and self.recommendation_view then
+        paragraph(meta,text_width,"此源未提供 AniList 关联",13)
+    end
     if item.chapters then
         local counts = item.chapters .. " 章"
         if item.unread then counts = counts .. " · " .. item.unread .. " 未读" end

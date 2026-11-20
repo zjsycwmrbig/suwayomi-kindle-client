@@ -60,4 +60,22 @@ function Titles.hanPart(name)
     if first then return name:sub(first, last) end
 end
 
+local traditional_pairs = {
+    {"為","为"},{"與","与"},{"這","这"},{"來","来"},{"個","个"},{"們","们"},{"會","会"},{"時","时"},
+    {"說","说"},{"後","后"},{"裡","里"},{"發","发"},{"國","国"},{"學","学"},{"體","体"},{"臺","台"},
+    {"萬","万"},{"啓","启"},{"啟","启"},{"喫","吃"},{"衆","众"},{"眾","众"},{"鏈","链"},{"鋸","锯"},
+    {"電","电"},{"進","进"},{"擊","击"},{"巨","巨"},{"術","术"},{"戰","战"},{"獸","兽"},{"讀","读"},
+    {"者","者"},{"視","视"},{"角","角"},{"鋼","钢"},{"鍊","炼"},{"術","术"},{"師","师"},{"龍","龙"},
+    {"劍","剑"},{"擊","击"},{"魔","魔"},{"導","导"},{"夢","梦"},{"戲","戏"},{"愛","爱"},{"情","情"},
+}
+local traditional = {}
+for _, pair in ipairs(traditional_pairs) do traditional[pair[1]] = true end
+
+function Titles.isTraditional(name)
+    for char in (name or ""):gmatch(char_pattern) do
+        if traditional[char] then return true end
+    end
+    return false
+end
+
 return Titles

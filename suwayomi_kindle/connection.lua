@@ -293,10 +293,12 @@ local function manga_rows(nodes)
     local rows = {}
     for i, item in ipairs(nodes) do
         if type(item) ~= "table" or not tonumber(item.id) or string_field(item.title) == "" then return nil end
-        local anilist_id
+        local anilist_id, supports_anilist = nil, false
         for _, record in ipairs(item.trackRecords and item.trackRecords.nodes or {}) do
-            if record.tracker and string_field(record.tracker.name):lower() == "anilist" then
-                anilist_id = tonumber(record.remoteId)
+            local tracker = record.tracker and string_field(record.tracker.name):lower()
+            if tracker and tracker:find("anilist_", 1, true) then supports_anilist = true end
+            if tracker == "anilist" then
+                anilist_id, supports_anilist = tonumber(record.remoteId), true
                 break
             end
         end
@@ -306,7 +308,7 @@ local function manga_rows(nodes)
             source = type(item.source) == "table" and string_field(item.source.displayName) or "",
             chapters = type(item.chapters) == "table" and tonumber(item.chapters.totalCount) or nil,
             added = tonumber(item.inLibraryAt), unread = tonumber(item.unreadCount), in_library = item.inLibrary == true,
-            anilist_id = anilist_id}
+            anilist_id = anilist_id, anilist_supported = supports_anilist}
     end
     return rows
 end
@@ -318,12 +320,40 @@ function Connection:with_tracker_id(item)
     local nodes = data and data.manga and data.manga.trackRecords and data.manga.trackRecords.nodes
     if type(nodes) ~= "table" then return item, err end
     for _, record in ipairs(nodes) do
-        if record.tracker and string_field(record.tracker.name):lower() == "anilist" then
+        local tracker = record.tracker and string_field(record.tracker.name):lower()
+        if tracker and (tracker == "anilist" or tracker:find("anilist_", 1, true)) then
+            item.anilist_supported = true
+        end
+        if tracker == "anilist" then
             item.anilist_id = tonumber(record.remoteId)
             break
         end
     end
     return item
+end
+
+function Connection:anilistSnapshots()
+    local data, err = self:request([[query {
+        mangas(filter:{inLibrary:{equalTo:true}}, first:500, offset:0, order:[{by:ID,byType:ASC}]) {
+          nodes { id title trackRecords { nodes { remoteId tracker { name } } } }
+        }
+    }]])
+    local nodes = data and data.mangas and data.mangas.nodes
+    if not is_array(nodes) then return nil, err or "AniList 关联响应无效。" end
+    local result = {}
+    for _, item in ipairs(nodes) do
+        for _, record in ipairs(item.trackRecords and item.trackRecords.nodes or {}) do
+            local tracker = record.tracker and string_field(record.tracker.name):lower()
+            if tracker == "anilist" then
+                local id = tonumber(record.remoteId)
+                if id then
+                    result[#result+1] = {id=tostring(item.id),title=item.title,anilist_id=id}
+                end
+                break
+            end
+        end
+    end
+    return {count=#nodes, rows=result}
 end
 
 function Connection:sources(language)

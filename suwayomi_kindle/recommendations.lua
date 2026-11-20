@@ -3,11 +3,11 @@ local Titles = require("suwayomi_kindle/manga_titles")
 local Languages = require("suwayomi_kindle/languages")
 local Recommendations = {}
 
-local function search_names(item, order)
+local function title_groups(item)
     local titles = item.titles or {}
-    local groups, mixed = {zh={}, en={}, ja={}}, {}
+    local groups, mixed = {zh_Hans={}, zh_Hant={}, en={}, ja={}}, {}
     if item.country == "CN" or item.country == "TW" or item.country == "HK" then
-        Titles.add(groups.zh, titles.native)
+        Titles.add(Titles.isTraditional(titles.native) and groups.zh_Hant or groups.zh_Hans, titles.native)
     end
     Titles.add(groups.en, titles.english)
     if item.country == "JP" or not item.country then Titles.add(groups.ja, titles.native) end
@@ -20,24 +20,44 @@ local function search_names(item, order)
                 Titles.add(mixed, Titles.hanPart(name))
                 Titles.add(mixed, name)
             else
-                Titles.add(groups.zh, name)
+                local group = Titles.isTraditional(name) and groups.zh_Hant or groups.zh_Hans
+                Titles.add(group, name)
             end
         end
     end
-    for _, name in ipairs(mixed) do Titles.add(groups.zh, name) end
-    if #groups.zh == 0 and not titles.native and not titles.english then
+    for _, name in ipairs(mixed) do
+        local group = Titles.isTraditional(name) and groups.zh_Hant or groups.zh_Hans
+        Titles.add(group, name)
+    end
+    if #groups.zh_Hans == 0 and #groups.zh_Hant == 0 and not titles.native and not titles.english then
         local han, kana, hangul = Titles.scripts(item.title)
-        if han and not kana and not hangul then Titles.add(groups.zh, item.title) end
+        if han and not kana and not hangul then
+            Titles.add(Titles.isTraditional(item.title) and groups.zh_Hant or groups.zh_Hans, item.title)
+        end
     end
     if item.country == "JP" or not item.country then Titles.add(groups.ja, titles.romaji) end
+    return groups
+end
 
+local function search_names(item, order)
+    local titles = item.titles or {}
+    local groups = title_groups(item)
     local names, known = {}, Titles.anilist(titles, item.synonyms)
     Titles.add(known, item.title)
     for _, lang in ipairs(Languages.titleOrder(order)) do
-        local group = groups[lang]
+        local group
+        if lang == "zh" then
+            group = {}
+            for _, name in ipairs(groups.zh_Hans) do Titles.add(group, name) end
+            for _, name in ipairs(groups.zh_Hant) do Titles.add(group, name) end
+        else
+            group = groups[lang]
+        end
         for i, name in ipairs(group) do
             Titles.add(known, name)
-            if i <= (lang == "zh" and 3 or 2) then Titles.add(names, name) end
+            if i <= ((lang == "zh" or lang == "zh_Hans" or lang == "zh_Hant") and 6 or 2) then
+                Titles.add(names, name)
+            end
         end
     end
     if #names == 0 then

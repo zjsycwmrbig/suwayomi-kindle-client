@@ -16,7 +16,8 @@ local defaults = {
     download = {directory = "", max_parallel = 1, retention = "1"},
     library = {view_mode = "list", sort = "title"},
     browse = {view_mode = "list", language = "zh", sort = "opened"},
-    recommendation = {enabled = true, auto_search = false, limit = 24, sources = 3, search_languages = "zh,en,ja"},
+    recommendation = {enabled = true, auto_search = false, limit = 24, sources = 3,
+        search_languages = "zh_Hans,zh_Hant,en,ja"},
 }
 
 local function fingerprint(settings)
@@ -46,9 +47,16 @@ function Store:load(section)
         else values[key] = value end
     end
     if section == "recommendation" then
-        local order = type(data.search_languages) == "string" and data.search_languages
-            or type(data.search_language) == "string" and data.search_language or nil
-        values.search_languages = table.concat(Languages.titleOrder(order), ",")
+        local stored = type(data.search_languages) == "string" and data.search_languages or nil
+        if stored and not stored:find("zh_", 1, true) then
+            local order = {}
+            for code in stored:gmatch("[^,]+") do
+                if code == "zh" then order[#order+1], order[#order+2] = "zh_Hans", "zh_Hant"
+                elseif code == "en" or code == "ja" then order[#order+1] = code end
+            end
+            stored = table.concat(order, ",")
+        end
+        values.search_languages = table.concat(Languages.titleOrder(stored and stored or "zh_Hans,zh_Hant,en,ja"), ",")
     end
     return values
 end

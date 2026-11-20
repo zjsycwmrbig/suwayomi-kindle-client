@@ -187,6 +187,11 @@ function View:find_recommendations(view, page)
             end
             snapshot.source_order = previous.source_order
         end
+        if snapshot.media and self.detail and self.detail.id == view.manga
+            and self.detail.anilist_id ~= snapshot.media then
+            self.detail.anilist_id = snapshot.media
+            index:setAnilistId(view.manga, snapshot.media)
+        end
         view.snapshot = snapshot
         update_results(view)
         save()

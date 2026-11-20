@@ -286,6 +286,25 @@ function Index:recommendationData(id)
     end)
 end
 
+function Index:applyAnilistSnapshots(snapshots)
+    return with_db(self, function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local update = db:prepare("UPDATE manga SET anilist_id=? WHERE id=? AND (anilist_id IS NULL OR anilist_id<>?)")
+        for _, row in ipairs(snapshots.rows or {}) do
+            update:reset():bind(row.anilist_id,row.id,row.anilist_id):step()
+        end
+        db:exec("COMMIT")
+        return true
+    end)
+end
+
+function Index:setAnilistId(id, anilist_id)
+    return with_db(self, function(db)
+        db:prepare("UPDATE manga SET anilist_id=? WHERE id=?"):bind(anilist_id,id):step()
+        return true
+    end)
+end
+
 function Index:saveRecommendations(id, snapshot)
     return with_db(self, function(db)
         db:prepare("INSERT OR REPLACE INTO manga_recommendations VALUES(?,?)")

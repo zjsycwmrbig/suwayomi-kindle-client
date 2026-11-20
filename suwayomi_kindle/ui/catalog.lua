@@ -103,6 +103,12 @@ local function refresh_shelf(home)
     home.shelf_requested = true
     home:request_catalog("library", {}, function(data)
         home.catalog_message = "已刷新 " .. data.count .. " 部漫画"
+        if home.anilist_sync ~= true then
+            home.anilist_sync = true
+            Worker.start(UI, home.settings.connection, "anilist_snapshots", {complete=data.count <= 500}, function()
+                home.anilist_sync = nil
+            end)
+        end
     end)
 end
 
@@ -140,7 +146,8 @@ local function start_source(home, source, manual)
     b.source, b.results, b.counts, b.ended = source, nil, {}, false
     local item = b.recommended_item
     b.recommended_item = nil
-    local query = item and require("suwayomi_kindle/recommendations").preferredTitle(item, home.settings.recommendation.search_languages)
+    local settings = home.settings.recommendation
+    local query = item and require("suwayomi_kindle/recommendations").preferredTitle(item,settings.search_languages)
     b.mode, b.page, b.slice, b.search, b.query = query and "SEARCH" or "POPULAR", 1, 1, query, query or ""
     home:refresh()
     fetch_page(home, b.mode, query, home.catalog_size, 1, true, nil, item)

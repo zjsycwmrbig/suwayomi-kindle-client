@@ -37,6 +37,12 @@ function Worker.run(config, action, input)
         if not failure then item, failure = client:with_tracker_id(item) end
         if item then Chapters.saveDescription(Index.new(config),item) end
         return item, failure
+    elseif action == "anilist_snapshots" then
+        local snapshots, failure = client:anilistSnapshots()
+        if not snapshots then return nil, failure end
+        snapshots.complete = input.complete
+        local saved, save_error = Index.new(config):applyAnilistSnapshots(snapshots)
+        return saved and snapshots or nil, save_error
     elseif action == "membership" then
         local ok, failure, added = client:setMembership(input.item.id,input.enabled)
         if not ok then return nil, failure end

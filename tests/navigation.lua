@@ -264,7 +264,7 @@ home:set_tab("library")
 home.settings.recommendation.enabled=true
 home.settings.recommendation.limit=5
 home.settings.recommendation.sources=3
-assert(home.settings.recommendation.search_languages=="zh,en,ja" and not home.settings.recommendation.auto_search)
+assert(home.settings.recommendation.search_languages=="zh_Hans,zh_Hant,en,ja" and not home.settings.recommendation.auto_search)
 home.detail={id="84",title="原漫画",description="原作简介"}
 home:refresh_detail()
 assert(last_request.action=="detail")
@@ -285,7 +285,7 @@ recommendation_items[1].synonyms={"相似漫画 1"}
 local pending_sources={}
 worker.start=function(_,_,action,input,done)
     if action=="recommendation_source" then
-        assert(input.search_languages=="zh,en,ja")
+        assert(input.search_languages=="zh_Hans,zh_Hant,en,ja")
         pending_sources[#pending_sources+1]={source=input.source.id,item=input.item.id,done=done}
     elseif action~="covers" then last_request,finish_request={action=action,input=input},done end
     return {cancel=function() end}
@@ -342,16 +342,16 @@ local snapshot=home:recommendation_state().snapshot
 snapshot.items[1].sources = {}
 home.recommendation_view=nil
 assert(home.index:saveRecommendations("84",snapshot))
-home.settings.recommendation.search_languages="en,zh,ja"
+home.settings.recommendation.search_languages="en,zh_Hans,zh_Hant,ja"
 home:refresh()
 assert(find(home,"title","Similar Manga 1"))
-home.settings.recommendation.search_languages="zh,en,ja"
+home.settings.recommendation.search_languages="zh_Hans,zh_Hant,en,ja"
 home:refresh()
 assert(find(home,"title","相似漫画 1")).callback()
 run_deferred()
 assert(home.selected_tab=="browse" and not home.detail and last_request.action=="source_seek")
 assert(last_request.input.mode=="SEARCH" and last_request.input.search=="相似漫画 1")
-assert(last_request.input.recommended_item.id==101 and last_request.input.search_languages=="zh,en,ja")
+assert(last_request.input.recommended_item.id==101 and last_request.input.search_languages=="zh_Hans,zh_Hant,en,ja")
 finish_request({search="中文译名",remote=1,slice=1,counts={0},ended=true,results={mangas={}}})
 assert(home.browse.query=="中文译名" and home.browse.search=="中文译名")
 home:set_tab("library")
@@ -361,14 +361,34 @@ home.settings_route="recommendation"
 home:refresh()
 assert(find(home,"label","☐  自动搜索相似漫画")).callback()
 assert(store:load("recommendation").auto_search)
-local pins = source_controls("pin")
-assert(#pins==3 and not pins[1].enabled)
-pins[3]:onTapControl()
-assert(store:load("recommendation").search_languages=="ja,zh,en")
-source_controls("move_down")[1]:onTapControl()
-assert(store:load("recommendation").search_languages=="zh,ja,en")
-source_controls("move_up")[3]:onTapControl()
-assert(store:load("recommendation").search_languages=="zh,en,ja")
+local function controls_with_icon(icon)
+    local result = {}
+    local function walk(widget)
+        if widget.icon == icon then result[#result+1] = widget end
+        for _, child in ipairs(widget) do walk(child) end
+    end
+    walk(home)
+    return result
+end
+local pins = controls_with_icon("pin")
+pins[1]:onTapControl()
+assert(store:load("recommendation").search_languages=="zh_Hans,zh_Hant,en,ja")
+local language_store = require("suwayomi_kindle/languages")
+assert(table.concat(language_store.titleOrder("en,zh_Hans,zh_Hant,ja"),",")=="en,zh_Hans,zh_Hant,ja")
+local recognition = {id=404,title="One Piece",country="JP",titles={native="ONE PIECE"},synonyms={
+    "ワンピース","ONE PIECE～航海王～"}}
+local rec_terms={}
+local rec_lookup={sourcePage=function(_,input) rec_terms[#rec_terms+1]=input.search;return {mangas={}} end}
+require("suwayomi_kindle/recommendations").explore(rec_lookup,{source=source,mode="SEARCH",size=4,target=1,
+    recommended_item=recognition,search_languages="zh_Hans,zh_Hant,en,ja"})
+assert(rec_terms[1]=="航海王")
+local languages = {{"zh_Hans","简体中文"},{"zh_Hant","繁体中文"},{"en","英语"},{"ja","日语"}}
+local function select_language(label)
+    if not find(home,"label",label) then
+        controls_with_icon("move_down")[#controls_with_icon("move_down")]:onTapControl()
+    end
+    assert(find(home,"label",label))
+end
 home:set_tab("library")
 home.index:upsert({id="88",title="自动搜索测试",author="",source="测试源",thumbnail="",
     chapters=1,unread=1,added=os.time()})

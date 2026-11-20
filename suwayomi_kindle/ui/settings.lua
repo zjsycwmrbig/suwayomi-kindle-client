@@ -255,9 +255,49 @@ function methods:build_recommendation_settings(screen_width, body_height)
         end
         local controls = Row:new{control("pin", "置顶", 1), control("move_up", "上移", rank-1),
             control("move_down", "下移", rank+1)}
+        local hint = code == "zh_Hans" and "优先搜索简体书名"
+            or code == "zh_Hant" and "优先搜索繁体书名"
+            or code == "zh" and "简体与繁体书名都搜索"
+            or "优先使用该语言标题"
         column[#column+1] = Row:new{align = "center",
             Left:new{dimen = Geom:new{w = width - controls:getSize().w, h = scale(50)},
-                label(rank .. ". " .. Languages.label(code))}, controls}
+                Column:new{Left:new{dimen=Geom:new{w=width-controls:getSize().w,h=scale(27)},
+                    label(rank .. ". " .. Languages.label(code))},
+                    Left:new{dimen=Geom:new{w=width-controls:getSize().w,h=scale(23)},
+                        Text:new{text=hint,face=Font:getFace("x_smallinfofont",13)}}}}, controls}
+    end
+    local separate, has_merged = false, false
+    for _, code in ipairs(order) do
+        separate = separate or code == "zh_Hans" or code == "zh_Hant"
+        has_merged = has_merged or code == "zh"
+    end
+    if separate then
+        column[#column+1] = Row:new{align="center",
+            Left:new{dimen=Geom:new{w=width-scale(72),h=scale(34)},
+                Text:new{text="简体与繁体分开搜索",face=Font:getFace("x_smallinfofont",13)}},
+            small(self,"合并",scale(64),function()
+                local result, added = {}, false
+                for _, value in ipairs(order) do
+                    if value == "zh_Hans" or value == "zh_Hant" then
+                        if not added then result[#result+1], added = "zh", true end
+                    else result[#result+1] = value end
+                end
+                save_section(self,"recommendation",{search_languages=table.concat(result,",")})
+            end,true)}
+    end
+    if has_merged then
+        column[#column+1] = Row:new{align="center",
+            Left:new{dimen=Geom:new{w=width-scale(72),h=scale(34)},
+                Text:new{text="简繁书名合并搜索",face=Font:getFace("x_smallinfofont",13)}},
+            small(self,"拆分",scale(64),function()
+                local split = {}
+                for _, value in ipairs(order) do
+                    if value == "zh" then
+                        split[#split+1], split[#split+2] = "zh_Hans", "zh_Hant"
+                    else split[#split+1] = value end
+                end
+                save_section(self,"recommendation",{search_languages=table.concat(split,",")})
+            end,true)}
     end
     column[#column+1] = rule(width)
     return self:settings_page_frame(screen_width, body_height, width, column)

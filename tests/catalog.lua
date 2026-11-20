@@ -67,6 +67,13 @@ assert(status_page.items[1].status == "COMPLETED" and status_page.items[2].statu
 assert(status_page.items[2].anilist_id == 120760)
 assert(ix:upsert({id="10",title="Other",author="",source="Source",thumbnail="",chapters=0,unread=0,anilist_id=nil}))
 assert(ix:page(1,5).items[2].anilist_id == 120760)
+assert(ix:applyAnilistSnapshots({complete=true,rows={{id="10",title="Other",anilist_id=120760}}}))
+assert(ix:page(1,5).items[2].anilist_id == 120760)
+assert(ix:applyAnilistSnapshots({complete=true,rows={}}))
+assert(ix:page(1,5).items[2].anilist_id == 120760)
+assert(ix:applyAnilistSnapshots({rows={{id="10",title="Other",anilist_id=120760}}}))
+assert(ix:applyAnilistSnapshots({complete=true,rows={}}))
+assert(ix:page(1,5).items[2].anilist_id == 120760)
 assert(ix:with_db(function(db) return tonumber(db:rowexec("SELECT count(*) FROM directories")) == 0 end))
 local function manga(n)
     return {id = tostring(n), title = string.format("Book %05d", n), source = "Source", author = "", thumbnail = "", added = 1700000000+n, chapters = n, unread = 0}
@@ -154,6 +161,24 @@ source_fixture.sourcePage=function() return {mangas={{id="46",title="怪兽8号"
     {id="47",title="Kaiju No.8"},{id="48",title="怪兽8号 RELAX"}}} end
 assert(#matching.search(source_fixture,source,recommendation).matches==0 and checked==1)
 anilist.identify = original_identify
+
+local scripts = require("suwayomi_kindle/manga_titles")
+assert(scripts.isTraditional("鏈鋸人") and not scripts.isTraditional("电锯人"))
+local language_order = require("suwayomi_kindle/languages")
+assert(table.concat(language_order.titleOrder("zh,en,ja"),",")=="zh,en,ja")
+assert(table.concat(language_order.titleOrder("en,zh_Hans,zh_Hant,ja"),",")=="en,zh_Hans,zh_Hant,ja")
+local locale_item = {id=321,title="Chainsaw Man",country="JP",
+    titles={native="チェンソーマン",english="Chainsaw Man"},
+    synonyms={"鏈鋸人","电锯人","电锯人","チェンソーマン"}}
+local locale_terms={}
+local locale_lookup={sourcePage=function(_,input)
+    locale_terms[#locale_terms+1]=input.search
+    return {mangas={{id="321",anilist_id=321}}}
+end}
+assert(matching.search(locale_lookup,source,locale_item,"zh_Hans,zh_Hant,en,ja").matches[1])
+assert(locale_terms[1]=="电锯人")
+assert(matching.preferredTitle(locale_item,"zh_Hant,zh_Hans,en,ja")=="鏈鋸人")
+assert(matching.preferredTitle(locale_item,"zh_Hans,zh_Hant,en,ja")=="电锯人")
 
 local mixed = {id=123,title="One-Punch Man",country="JP",
     titles={native="ワンパンマン",english="One-Punch Man"},synonyms={"원펀맨", "ONE-PUNCH MAN 一拳超人"}}
