@@ -235,6 +235,9 @@ function methods:build_recommendation_settings(screen_width, body_height)
         rule(width),
         stepper(self, width, "优先搜索源数", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"}}, config.sources,
             function(value) save_section(self, "recommendation", {sources = value}) end),
+        rule(width),
+        stepper(self, width, "搜索书名语言", {{"zh","中文"},{"en","英语"},{"ja","日语"},{"auto","跟随源"}}, config.search_language,
+            function(value) save_section(self, "recommendation", {search_language = value}) end),
         rule(width)}
     return self:settings_page_frame(screen_width, body_height, width, column)
 end

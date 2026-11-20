@@ -121,7 +121,7 @@ function Home:set_tab(tab_id, from_system_back)
     end
     self:cancel_catalog()
     self.detail, self.directory,self.reader_origin = nil, nil,nil
-    self.detail_stack, self.recommendation_view, self.recommendation_scroll = nil, nil, nil
+    self.detail_stack, self.recommendation_view = nil, nil
     self.catalog_message = nil
     self.selected_tab = tab_id
     if tab_id == "browse" then
@@ -186,7 +186,15 @@ function Home:refresh()
 
     self:capture_inputs()
     self:release_input_form()
-    if self.cropping_widget then self.cropping_widget:reset(); self.cropping_widget = nil end
+    local detail_scroll
+    if self.cropping_widget then
+        local view = self.cropping_widget
+        if self.detail and not self.directory and view.detail_item == self.detail then
+            detail_scroll = view._scroll_offset_y
+        end
+        view:reset()
+        self.cropping_widget = nil
+    end
     local screen = Screen:getSize()
     local tab_bar = TabBar:build{
         items = TAB_ITEMS,
@@ -263,7 +271,7 @@ function Home:refresh()
     elseif self.selected_tab == "tasks" then
         body = self:build_tasks(screen.w,body_height)
     else
-        body = self:build_catalog(screen.w, body_height)
+        body = self:build_catalog(screen.w, body_height, detail_scroll)
     end
 
     local navigation = VerticalGroup:new{align = "center"}

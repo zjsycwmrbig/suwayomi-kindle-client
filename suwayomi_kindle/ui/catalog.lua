@@ -47,7 +47,7 @@ function Catalog:reset_catalog()
     self:reset_browse()
     self.all_sources, self.pinned, self.source_history, self.directory = nil, nil, nil, nil
     self.detail, self.catalog_message, self.shelf_requested = nil, nil, nil
-    self.detail_stack, self.recommendation_view, self.recommendation_scroll = nil, nil, nil
+    self.detail_stack, self.recommendation_view = nil, nil
     self.shelf_page, self.index, self.shelf_search = 1, nil, nil
     self.task_page,self.task_view,self.task_message=1,"queue",nil
     self.task_filter,self.task_file_scope,self.task_folder="all","managed",nil
@@ -72,7 +72,6 @@ function Catalog:catalog_back()
         local previous = self.detail_stack and table.remove(self.detail_stack)
         self.detail = previous and previous.item or nil
         self.recommendation_view = previous and previous.view or nil
-        if previous then self.recommendation_scroll = true end
     else
         self.browse.source, self.browse.results = nil, nil
         self.browse.auto_open = false
@@ -116,11 +115,14 @@ function Catalog:fetch_sources()
     end)
 end
 
-local function fetch_page(home, mode, search, size, target, reset, by_item)
+local function fetch_page(home, mode, search, size, target, reset, by_item, recommended_item)
     local b = home.browse
     home:request_catalog("source_seek", {source = b.source, mode = mode, size = size,
         search = search, counts = not reset and b.counts or {}, ended = not reset and b.ended,
-        target = target, by_item = by_item}, function(data)
+        target = target, by_item = by_item, recommended_item = recommended_item,
+        search_language = recommended_item and home.settings.recommendation.search_language}, function(data)
+        if data.search and b.query == search then b.query = data.search end
+        search = data.search or search
         b.mode, b.search, b.page, b.slice = mode, search, data.remote, data.slice
         b.results, b.counts, b.ended = data.results, data.counts, data.ended
     end)
@@ -138,10 +140,10 @@ local function start_source(home, source, manual)
     b.source, b.results, b.counts, b.ended = source, nil, {}, false
     local item = b.recommended_item
     b.recommended_item = nil
-    local query = item and require("suwayomi_kindle/recommendations").searchTitle(item, source.lang)
+    local query = item and item.title
     b.mode, b.page, b.slice, b.search, b.query = query and "SEARCH" or "POPULAR", 1, 1, query, query or ""
     home:refresh()
-    fetch_page(home, b.mode, query, home.catalog_size, 1, true)
+    fetch_page(home, b.mode, query, home.catalog_size, 1, true, nil, item)
     if err then UI:show(require("ui/widget/infomessage"):new{text=err,timeout=3}) end
 end
 
@@ -149,7 +151,7 @@ function Catalog:search_recommended(item)
     self:cancel_catalog()
     self:close_drawer()
     self.detail, self.directory, self.reader_origin = nil, nil, nil
-    self.detail_stack, self.recommendation_view, self.recommendation_scroll = nil, nil, nil
+    self.detail_stack, self.recommendation_view = nil, nil
     self.catalog_message = nil
     self:reset_browse()
     self.browse.recommended_item = item
@@ -254,6 +256,7 @@ end
 local function search_bar(home, column, width, source, submit, shelf)
     local b = shelf or home.browse
     local key = (shelf or source) and "query" or "source_query"
+    local initial_query = b[key] or ""
     local button_w, gap = scale(58), scale(6)
     local padding, border = scale(6), scale(1)
     local field
@@ -264,10 +267,13 @@ local function search_bar(home, column, width, source, submit, shelf)
     end
     field = InputText:new{parent = home, focused = false, width = width - button_w - gap - 2*(padding+border),
         height = scale(24), padding = padding, margin = 0, bordersize = border, scroll = true,
-        text = b[key] or "", hint = shelf and "搜索书名或作者" or source and "在这个源中搜索漫画" or "查找漫画源",
+        text = initial_query, hint = shelf and "搜索书名或作者" or source and "在这个源中搜索漫画" or "查找漫画源",
         face = Font:getFace("smallinfofont", 16), enter_callback = apply}
     home:bind_keyboard_close(field)
-    home.input_form = {fields = {}, capture = function() b[key] = field:getText() end}
+    home.input_form = {fields = {}, capture = function()
+        local text = field:getText()
+        if text ~= initial_query then b[key] = text end
+    end}
     column[#column+1] = Row:new{field, Gap:new{width = gap},
         Button.new{text = "搜索", compact = true, width = button_w, show_parent = home, callback = apply}}
 end
@@ -341,9 +347,6 @@ local function load_posters(home, items)
             if not home.alive or home.poster_key ~= key then return end
             home.poster_job = nil
             if data and data.changed and not (home.input_form and home.input_form.focused) then
-                if home.detail and #items > 1 and home.cropping_widget and (home.cropping_widget._scroll_offset_y or 0) > 0 then
-                    home.recommendation_scroll = true
-                end
                 home:refresh()
             end
         end)
@@ -527,12 +530,13 @@ local function grid_layout(width, available, captions)
     return rows * 3, math.max(1, math.min(ideal, math.floor(available / rows) - captions))
 end
 
-function Catalog:build_catalog(screen_width, height)
+function Catalog:build_catalog(screen_width, height, detail_scroll)
     local browsing = self.selected_tab == "browse" and not self.detail
     local browsing_results = browsing and self.browse.source
     local inset = scale(browsing_results and 12 or 24)
     local width = screen_width - inset * 2
     local column = Column:new{align = "left", Space:new{width = scale(browsing_results and 6 or 12)}}
+    local recommendations, detail_item
     if not self.directory then
         local loading = self.pending and not (browsing_results and self.browse.results)
         note(column, width, loading and "正在从服务器获取数据…" or self.catalog_message)
@@ -564,7 +568,10 @@ function Catalog:build_catalog(screen_width, height)
         end}})
     elseif self.directory then self:build_directory(column,width,height)
     elseif self.detail then
-        local posters = self:build_detail(column,width)
+        detail_item = self.detail
+        self:build_detail(column,width)
+        local posters = {detail_item}
+        recommendations = self:build_recommendations(width,height,posters)
         load_posters(self,posters)
     elseif self.selected_tab == "library" then library(self, column, width, size, grid, poster_height)
     else
@@ -572,19 +579,20 @@ function Catalog:build_catalog(screen_width, height)
         if browsing_results then source_manga(self, column, width, size, grid, poster_height)
         else sources(self, column, width, size) end
     end
-    local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = height},
-        show_parent = self, column}
+    local scroll_height = height - (recommendations and recommendations:getSize().h or 0)
+    local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = scroll_height},
+        show_parent = self, detail_item = detail_item, column}
     if self.input_form then
         self.input_form.viewport, self.input_form.height = viewport, height
     end
     self.cropping_widget = viewport
-    if self.recommendation_scroll and self.detail and not self.directory then
-        self.recommendation_scroll = nil
+    if detail_item and detail_scroll and detail_scroll > 0 then
         viewport:initState()
-        if viewport._is_scrollable then viewport:scrollToRatio(nil, 1) end
+        if viewport._is_scrollable then viewport:_scrollBy(0, detail_scroll) end
     end
+    local content = recommendations and Column:new{align="left", viewport, recommendations} or viewport
     return Frame:new{width = screen_width, height = height, padding = 0, bordersize = 0,
-        padding_left = inset, viewport}
+        padding_left = inset, content}
 end
 
 return Catalog

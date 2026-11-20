@@ -264,6 +264,7 @@ home:set_tab("library")
 home.settings.recommendation.enabled=true
 home.settings.recommendation.limit=5
 home.settings.recommendation.sources=3
+assert(home.settings.recommendation.search_language=="zh")
 home.detail={id="84",title="原漫画",description="原作简介"}
 home:refresh_detail()
 assert(last_request.action=="detail")
@@ -281,6 +282,7 @@ for i=1,5 do recommendation_items[i]={id=100+i,title="相似漫画 "..i,titles={
 local pending_sources={}
 worker.start=function(_,_,action,input,done)
     if action=="recommendation_source" then
+        assert(input.search_language=="zh")
         pending_sources[#pending_sources+1]={source=input.source.id,item=input.item.id,done=done}
     elseif action~="covers" then last_request,finish_request={action=action,input=input},done end
     return {cancel=function() end}
@@ -297,10 +299,24 @@ assert(#pending_sources==4 and not home.pagination)
 home:find_recommendations(home:recommendation_state())
 assert(#pending_sources==4 and not home.recommendation_view.jobs)
 assert(not home.pagination and find(home,"title","推荐漫画 4") and not find(home,"title","推荐漫画 5"))
+local function recommendation_y()
+    home:paintTo(device.screen.bb,0,0)
+    local heading=assert(find(home,"text","相似漫画 · AniList · 5 部候选"))
+    local viewport=home.cropping_widget.dimen
+    assert(heading.dimen.y==viewport.y+viewport.h)
+    return heading.dimen.y
+end
+local fixed_y=recommendation_y()
+home.detail.description=("原作简介很长。\n"):rep(100)
+home:refresh()
+assert(recommendation_y()==fixed_y)
+home.cropping_widget:_scrollBy(0,80)
+assert(recommendation_y()==fixed_y and home.cropping_widget._scroll_offset_y==80)
 local shelf_row=assert(parent_of(home,find(home,"title","推荐漫画 4")))
 assert(not shelf_row[1].enabled and shelf_row[#shelf_row].icon=="chevron.right")
 shelf_row[#shelf_row].callback()
 assert(#pending_sources==5 and pending_sources[5].item==105)
+assert(recommendation_y()==fixed_y and home.cropping_widget._scroll_offset_y==80)
 pending_sources[5].done({matches={}})
 run_deferred()
 assert(#pending_sources==6 and pending_sources[6].item==105 and pending_sources[5].source~=pending_sources[6].source)
@@ -327,6 +343,9 @@ assert(find(home,"title","相似漫画 1")).callback()
 run_deferred()
 assert(home.selected_tab=="browse" and not home.detail and last_request.action=="source_seek")
 assert(last_request.input.mode=="SEARCH" and last_request.input.search=="相似漫画 1")
+assert(last_request.input.recommended_item.id==101 and last_request.input.search_language=="zh")
+finish_request({search="中文译名",remote=1,slice=1,counts={0},ended=true,results={mangas={}}})
+assert(home.browse.query=="中文译名" and home.browse.search=="中文译名")
 home:set_tab("library")
 worker.start = worker_start
 

@@ -1,7 +1,9 @@
 local UI = require("ui/uimanager")
 local Text = require("ui/widget/textboxwidget")
+local Label = require("ui/widget/textwidget")
 local Font = require("ui/font")
 local Row = require("ui/widget/horizontalgroup")
+local Column = require("ui/widget/verticalgroup")
 local Gap = require("ui/widget/horizontalspan")
 local Button = require("ui/widget/button")
 local Screen = require("device").screen
@@ -59,7 +61,6 @@ function View:find_recommendations(view, page)
     local limit = math.max(1, math.min(50, math.floor(config.limit)))
 
     local function refresh()
-        self.recommendation_scroll = true
         self:refresh()
     end
     local function save()
@@ -83,8 +84,13 @@ function View:find_recommendations(view, page)
         local snapshot = view.snapshot
         local history = self:source_history_data()
         local sources = Sources.list(all, self.settings.browse.language, nil, "opened", self:source_pins(), history.opened)
+        local function language(source) return Recommendations.searchLanguage(config.search_language, source) end
+        local source_languages = {}
         snapshot.source_order = {}
-        for i=1, math.min(#sources, config.sources) do snapshot.source_order[i] = sources[i].id end
+        for i=1, math.min(#sources, config.sources) do
+            local source = sources[i]
+            snapshot.source_order[i], source_languages[source.id] = source.id, language(source)
+        end
         update_results(view)
         save()
         if #snapshot.source_order == 0 then finish("当前语言下没有可搜索的漫画源。"); return end
@@ -104,11 +110,12 @@ function View:find_recommendations(view, page)
                     for i, id in ipairs(snapshot.source_order) do
                         local cached = item.sources[id]
                         local tried = attempted[item.id] and attempted[item.id][id]
-                        if not tried and (not cached or not cached.verified or cached.failed or not fresh(cached.checked_at)) then
+                        local compatible = cached and cached.search_language == source_languages[id]
+                        if not tried and (not compatible or not cached.verified or cached.failed or not fresh(cached.checked_at)) then
                             pending = sources[i]
                             break
                         end
-                        if cached and cached.verified and #cached.matches > 0 and not cached.failed then
+                        if compatible and cached.verified and #cached.matches > 0 and not cached.failed then
                             errors[item.id] = nil
                             break
                         end
@@ -120,19 +127,22 @@ function View:find_recommendations(view, page)
                         active[item.id] = true
                         attempted[item.id] = attempted[item.id] or {}
                         attempted[item.id][id] = true
-                        run(item.id, "recommendation_source", {source=pending,item={
-                            id=item.id, titles=item.titles, synonyms=item.synonyms, translations=item.translations, origin=view.manga,
+                        run(item.id, "recommendation_source", {source=pending,search_language=source_languages[id],item={
+                            id=item.id, title=item.title, titles=item.titles, synonyms=item.synonyms, translations=item.translations, origin=view.manga,
                         }}, function(found, err)
                             active[item.id] = nil
                             local previous = item.sources[id]
                             if found then
                                 item.translations = found.translations or item.translations
                                 found.translations = nil
-                                found.checked_at, found.verified = os.time(), true
+                                found.checked_at, found.verified, found.search_language = os.time(), true, source_languages[id]
                                 item.sources[id] = found
                             else
                                 errors[item.id] = err or "漫画源搜索失败。"
-                                item.sources[id] = {failed=true, verified=previous and previous.verified, matches=previous and previous.matches or {}}
+                                item.sources[id] = {failed=true, search_language=source_languages[id], matches={}}
+                                if previous and previous.search_language == source_languages[id] and previous.verified then
+                                    item.sources[id].verified, item.sources[id].matches = true, previous.matches
+                                end
                             end
                             update_results(view)
                             save()
@@ -183,6 +193,7 @@ function View:find_recommendations(view, page)
         view.snapshot = snapshot
         update_results(view)
         save()
+        refresh()
         resolve_sources()
     end)
 end
@@ -195,17 +206,18 @@ function View:open_recommended(view, candidate)
     self:open_detail(candidate)
 end
 
-function View:build_recommendations(column, width, posters)
+function View:build_recommendations(width, height, posters)
     local view = self:recommendation_state()
     if not view or not (view.snapshot or view.busy or view.error) then return end
+    local column = Column:new{align="left"}
     local count = view.snapshot and #view.snapshot.items or 0
     note(column, width, count > 0 and ("相似漫画 · AniList · " .. count .. " 部候选") or "相似漫画 · AniList", 17)
-    if view.busy then note(column, width, view.busy) end
-    if view.error then note(column, width, view.error) end
     if count == 0 then
-        if not view.busy and not view.error then note(column, width, "无推荐漫画。") end
-        return
+        note(column, width, view.busy or view.error or "无推荐漫画。")
+        return column
     end
+    column[#column+1] = Label:new{text=view.busy or view.error or " ", max_width=width,
+        face=Font:getFace("smallinfofont",15)}
     local total = self:recommendation_page_count(view)
     local function go(page)
         if page < 1 or page > total or page == view.page then return end
@@ -223,13 +235,16 @@ function View:build_recommendations(column, width, posters)
     local tiles = Row:new{align="center", allow_mirroring=false, arrow("chevron.left", view.page - 1)}
     local cover_space = width - 2 * arrow_width
     local tile_width = math.floor(cover_space / page_size)
+    local poster_height = math.max(1, math.min(math.floor((tile_width - 6) / 0.71),
+        math.floor(height * 0.55) - column:getSize().h - Screen:scaleBySize(48)))
+    column:resetLayout()
     for _, slot in ipairs(view.results) do
         local item, candidate = slot.item, slot.match
         local title, subtitle, path, open
         if candidate then
             posters[#posters+1] = candidate
             title = candidate.title
-            subtitle = candidate.author and candidate.author ~= "" and candidate.author or candidate.source
+            subtitle = candidate.author and candidate.author ~= "" and candidate.author or candidate.source or " "
             path = Covers.path(self.settings.connection, candidate)
             open = function() self:open_recommended(view, candidate) end
         else
@@ -238,12 +253,13 @@ function View:build_recommendations(column, width, posters)
             open = function() self:search_recommended(item) end
         end
         tiles[#tiles+1] = Tile:new{width=tile_width, title=title, subtitle=subtitle,
-            poster_height=math.floor((tile_width - 6) / 0.71), path=path, callback=open}
+            poster_height=poster_height, path=path, callback=open}
     end
     local visible = #view.results
     tiles[#tiles+1] = Gap:new{width=cover_space - visible * tile_width}
     tiles[#tiles+1] = arrow("chevron.right", view.page + 1)
     column[#column+1] = tiles
+    return column
 end
 
 function View:recommendation_page_count(view)

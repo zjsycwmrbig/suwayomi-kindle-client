@@ -144,6 +144,40 @@ source_fixture.sourcePage=function() return {mangas={{id="46",title="怪兽8号"
 recommendation.translations={}
 assert(#matching.search(source_fixture,source,recommendation).matches==0 and checked==1)
 anilist.resolve = original_resolve
+
+local titles = require("suwayomi_kindle/manga_titles")
+local original_translations = titles.translations
+local alias_lookups = {}
+titles.translations = function(title)
+    alias_lookups[#alias_lookups+1] = title
+    if title == "怪獣8号" then return {} end
+    assert(title == "Kaiju No.8")
+    return {"怪獸8號", "怪獣8号"}
+end
+local untranslated = {id=123,title="Kaiju No.8",titles={native="怪獣8号",english="Kaiju No.8"},synonyms={"かいじゅう8ごう"}}
+local terms = {}
+local lookup = {sourcePage=function(_, input)
+    terms[#terms+1] = input.search
+    return {mangas={{id="88",anilist_id=123}}}
+end}
+local localized = assert(matching.search(lookup,source,untranslated,"zh"))
+assert(#localized.matches==1 and terms[1]=="怪獸8號" and #alias_lookups==2)
+untranslated.translations = localized.translations
+assert(matching.search(lookup,source,untranslated,"en").matches[1] and terms[2]=="Kaiju No.8")
+assert(matching.search(lookup,source,untranslated,"ja").matches[1] and terms[3]=="怪獣8号")
+assert(matching.search(lookup,source,untranslated,"auto").matches[1] and terms[4]=="怪獸8號" and #alias_lookups==2)
+local function explore()
+    return matching.explore(lookup,{source=source,mode="SEARCH",size=4,target=1,recommended_item=untranslated,search_language="zh"})
+end
+lookup.sourcePage=function(_, input)
+    return {mangas=input.search=="怪獸8號" and {} or {{id="88"}}}
+end
+assert(explore().search=="怪獣8号")
+untranslated.translations = nil
+titles.translations = function() return nil, "无法获取 Bangumi 数据。" end
+assert(explore().search=="怪獣8号")
+titles.translations = original_translations
+
 source_search.verified=true
 local other_edition = {id="54",title="Kaiju No.8",anilist_id=123}
 recommendation.sources={zh=source_search,en={verified=true,matches={other_edition}}}

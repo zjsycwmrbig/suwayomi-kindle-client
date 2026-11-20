@@ -63,9 +63,6 @@ function Manga:build_detail(column,width)
     paragraph(column,width,"简介",18,true)
     paragraph(column,width,item.description and item.description ~= "" and item.description
         or (self.pending == "detail" and "正在获取简介…" or "暂无简介"),16)
-    local posters = {item}
-    self:build_recommendations(column,width,posters)
-    return posters
 end
 
 function Manga:detail_footer(width)
