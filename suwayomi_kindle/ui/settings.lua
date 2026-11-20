@@ -21,6 +21,7 @@ local UI = require("ui/uimanager")
 local Config = require("suwayomi_kindle/config")
 local Button = require("suwayomi_kindle/ui/flat_button")
 local SettingRow = require("suwayomi_kindle/ui/setting_row")
+local SourceControl = require("suwayomi_kindle/ui/source_control")
 
 local Screen = Device.screen
 local methods = {}
@@ -230,15 +231,35 @@ function methods:build_recommendation_settings(screen_width, body_height)
                 save_section(self, "recommendation", {enabled = not config.enabled})
             end},
         rule(width),
+        SettingRow:new{label = (config.auto_search and "☑  " or "☐  ") .. "自动搜索相似漫画", single_line = true,
+            width = width, callback = function()
+                save_section(self, "recommendation", {auto_search = not config.auto_search})
+            end},
+        rule(width),
         stepper(self, width, "推荐前几部", {{5,"5"},{10,"10"},{15,"15"},{20,"20"},{24,"24"},{25,"25"},{36,"36"},{50,"50"}}, config.limit,
             function(value) save_section(self, "recommendation", {limit = value}) end),
         rule(width),
         stepper(self, width, "优先搜索源数", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"}}, config.sources,
             function(value) save_section(self, "recommendation", {sources = value}) end),
-        rule(width),
-        stepper(self, width, "搜索书名语言", {{"zh","中文"},{"en","英语"},{"ja","日语"},{"auto","跟随源"}}, config.search_language,
-            function(value) save_section(self, "recommendation", {search_language = value}) end),
-        rule(width)}
+        rule(width), label("搜索书名语言优先级")}
+    local order = Languages.titleOrder(config.search_languages)
+    for rank, code in ipairs(order) do
+        local function control(icon, text, target)
+            return SourceControl:new{icon = icon, label = text, height = scale(50),
+                enabled = target >= 1 and target <= #order and target ~= rank,
+                callback = function()
+                    table.remove(order, rank)
+                    table.insert(order, target, code)
+                    save_section(self, "recommendation", {search_languages = table.concat(order, ",")})
+                end}
+        end
+        local controls = Row:new{control("pin", "置顶", 1), control("move_up", "上移", rank-1),
+            control("move_down", "下移", rank+1)}
+        column[#column+1] = Row:new{align = "center",
+            Left:new{dimen = Geom:new{w = width - controls:getSize().w, h = scale(50)},
+                label(rank .. ". " .. Languages.label(code))}, controls}
+    end
+    column[#column+1] = rule(width)
     return self:settings_page_frame(screen_width, body_height, width, column)
 end
 

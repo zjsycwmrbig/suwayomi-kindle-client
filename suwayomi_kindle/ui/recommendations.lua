@@ -84,12 +84,10 @@ function View:find_recommendations(view, page)
         local snapshot = view.snapshot
         local history = self:source_history_data()
         local sources = Sources.list(all, self.settings.browse.language, nil, "opened", self:source_pins(), history.opened)
-        local function language(source) return Recommendations.searchLanguage(config.search_language, source) end
-        local source_languages = {}
+        local search_languages = config.search_languages
         snapshot.source_order = {}
         for i=1, math.min(#sources, config.sources) do
-            local source = sources[i]
-            snapshot.source_order[i], source_languages[source.id] = source.id, language(source)
+            snapshot.source_order[i] = sources[i].id
         end
         update_results(view)
         save()
@@ -110,7 +108,7 @@ function View:find_recommendations(view, page)
                     for i, id in ipairs(snapshot.source_order) do
                         local cached = item.sources[id]
                         local tried = attempted[item.id] and attempted[item.id][id]
-                        local compatible = cached and cached.search_language == source_languages[id]
+                        local compatible = cached and cached.search_languages == search_languages
                         if not tried and (not compatible or not cached.verified or cached.failed or not fresh(cached.checked_at)) then
                             pending = sources[i]
                             break
@@ -127,20 +125,19 @@ function View:find_recommendations(view, page)
                         active[item.id] = true
                         attempted[item.id] = attempted[item.id] or {}
                         attempted[item.id][id] = true
-                        run(item.id, "recommendation_source", {source=pending,search_language=source_languages[id],item={
-                            id=item.id, title=item.title, titles=item.titles, synonyms=item.synonyms, translations=item.translations, origin=view.manga,
+                        run(item.id, "recommendation_source", {source=pending,search_languages=search_languages,item={
+                            id=item.id, title=item.title, titles=item.titles, synonyms=item.synonyms, country=item.country, origin=view.manga,
                         }}, function(found, err)
                             active[item.id] = nil
                             local previous = item.sources[id]
                             if found then
-                                item.translations = found.translations or item.translations
-                                found.translations = nil
-                                found.checked_at, found.verified, found.search_language = os.time(), true, source_languages[id]
+                                item.translations = nil
+                                found.checked_at, found.verified, found.search_languages = os.time(), true, search_languages
                                 item.sources[id] = found
                             else
                                 errors[item.id] = err or "漫画源搜索失败。"
-                                item.sources[id] = {failed=true, search_language=source_languages[id], matches={}}
-                                if previous and previous.search_language == source_languages[id] and previous.verified then
+                                item.sources[id] = {failed=true, search_languages=search_languages, matches={}}
+                                if previous and previous.verified then
                                     item.sources[id].verified, item.sources[id].matches = true, previous.matches
                                 end
                             end
@@ -186,7 +183,7 @@ function View:find_recommendations(view, page)
             for _, item in ipairs(previous.items) do matches[item.id] = item end
             for _, item in ipairs(snapshot.items) do
                 local old = matches[item.id]
-                if old then item.sources, item.translations = old.sources, old.translations end
+                if old then item.sources = old.sources end
             end
             snapshot.source_order = previous.source_order
         end
@@ -224,7 +221,7 @@ function View:build_recommendations(width, height, posters)
         self:cancel_recommendations()
         self:find_recommendations(view, page)
     end
-    local arrow_width = math.min(Screen:scaleBySize(36), math.floor(width / 12))
+    local arrow_width = math.min(Screen:scaleBySize(26), math.floor(width / 12))
     local icon_size = math.min(Screen:scaleBySize(20), arrow_width)
     local function arrow(icon, target)
         return Button:new{icon=icon, enabled=target >= 1 and target <= total, show_parent=self,

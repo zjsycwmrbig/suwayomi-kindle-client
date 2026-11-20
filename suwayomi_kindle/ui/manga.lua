@@ -31,14 +31,21 @@ function Manga:open_detail(item)
     if item.in_library then self:local_index():markOpened(item.id) end
     item.first_unread_id = nil
     item.description = Chapters.description(self:local_index(),item.id) or item.description
-    self:refresh_detail()
+    self:refresh_detail(true)
 end
 
-function Manga:refresh_detail()
+function Manga:refresh_detail(on_open)
     local item = self.detail
+    local function auto_search()
+        if on_open and self.settings.recommendation.auto_search then
+            local view = self:recommendation_state()
+            if view then self:find_recommendations(view) end
+        end
+    end
     self:request_catalog("detail",{id=item.id},function(data)
         for key,value in pairs(data) do item[key] = value end
-    end)
+        auto_search()
+    end, auto_search)
 end
 
 function Manga:build_detail(column,width)

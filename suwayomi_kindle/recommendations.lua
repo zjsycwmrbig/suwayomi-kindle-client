@@ -3,68 +3,57 @@ local Titles = require("suwayomi_kindle/manga_titles")
 local Languages = require("suwayomi_kindle/languages")
 local Recommendations = {}
 
-function Recommendations.searchLanguage(preference, source)
-    if preference == "zh" or preference == "en" or preference == "ja" then return preference end
-    return Languages.base(source.lang)
-end
-
-local function chinese_names(item, translations)
-    local names = {}
-    for _, group in ipairs({translations or {}, item.synonyms or {}}) do
-        for _, name in ipairs(group) do
-            if Titles.isChineseAlias(name) and Titles.key(name) ~= Titles.key((item.titles or {}).native) then
-                Titles.add(names, name)
-            end
-        end
-    end
-    return names
-end
-
-local function search_names(item, lang, translations)
-    local names = {}
+local function search_names(item, order)
     local titles = item.titles or {}
-    if lang == "zh" then
-        names = chinese_names(item, translations)
-    elseif lang == "en" then
-        Titles.add(names, titles.english)
-        Titles.add(names, titles.romaji)
-    elseif lang == "ja" then
-        Titles.add(names, titles.native)
+    local groups, mixed = {zh={}, en={}, ja={}}, {}
+    if item.country == "CN" or item.country == "TW" or item.country == "HK" then
+        Titles.add(groups.zh, titles.native)
     end
-    for _, name in ipairs(Titles.anilist(titles, item.synonyms)) do Titles.add(names, name) end
-    Titles.add(names, item.title)
-    return names
-end
-
-local function localized_names(item, source, preference)
-    local lang = Recommendations.searchLanguage(preference, source)
-    local translations = item.translations
-    local incomplete = false
-    if lang == "zh" and not translations and #chinese_names(item) == 0 then
-        local inputs = Titles.anilist(item.titles)
-        Titles.add(inputs, item.title)
-        local aliases = {}
-        for i = 1, math.min(2, #inputs) do
-            local found = Titles.translations(inputs[i])
-            if found then
-                for _, alias in ipairs(found) do Titles.add(aliases, alias) end
-                if #chinese_names(item, aliases) > 0 then break end
+    Titles.add(groups.en, titles.english)
+    if item.country == "JP" or not item.country then Titles.add(groups.ja, titles.native) end
+    for _, name in ipairs(item.synonyms or {}) do
+        local han, kana, hangul, latin = Titles.scripts(name)
+        if kana then
+            Titles.add(groups.ja, name)
+        elseif han and not hangul and Titles.key(name) ~= Titles.key(titles.native) then
+            if latin then
+                Titles.add(mixed, Titles.hanPart(name))
+                Titles.add(mixed, name)
             else
-                incomplete = true
-                break
+                Titles.add(groups.zh, name)
             end
         end
-        if not incomplete or #aliases > 0 then translations = aliases end
     end
-    return search_names(item, lang, translations), translations, incomplete
+    for _, name in ipairs(mixed) do Titles.add(groups.zh, name) end
+    if #groups.zh == 0 and not titles.native and not titles.english then
+        local han, kana, hangul = Titles.scripts(item.title)
+        if han and not kana and not hangul then Titles.add(groups.zh, item.title) end
+    end
+    if item.country == "JP" or not item.country then Titles.add(groups.ja, titles.romaji) end
+
+    local names, known = {}, Titles.anilist(titles, item.synonyms)
+    Titles.add(known, item.title)
+    for _, lang in ipairs(Languages.titleOrder(order)) do
+        local group = groups[lang]
+        for i, name in ipairs(group) do
+            Titles.add(known, name)
+            if i <= (lang == "zh" and 3 or 2) then Titles.add(names, name) end
+        end
+    end
+    if #names == 0 then
+        Titles.add(names, titles.native)
+        Titles.add(names, titles.romaji)
+        Titles.add(names, item.title)
+    end
+    return names, known
 end
 
 function Recommendations.explore(client, input)
     local fetch = require("suwayomi_kindle/source_pages").fetch
-    local names = localized_names(input.recommended_item, input.source, input.search_language)
+    local names = search_names(input.recommended_item, input.search_languages)
     local first_empty
-    for i = 1, math.min(3, #names) do
-        input.search = names[i]
+    for _, name in ipairs(names) do
+        input.search = name
         local page, err = fetch(client, input)
         if not page then
             if not first_empty then return nil, err end
@@ -79,61 +68,42 @@ function Recommendations.explore(client, input)
     return nil, "没有可搜索的书名。"
 end
 
-function Recommendations.search(client, source, item, preference)
-    local identities = {}
-    local alternate_checks = 0
-    local names, aliases, incomplete = localized_names(item, source, preference)
-    local function verify(candidate)
-        local key = Titles.key(candidate.title)
-        if identities[key] == nil then
-            local id, err, missing_aliases = AniList.resolve(candidate.title)
-            incomplete = incomplete or missing_aliases
-            if err then return nil, err end
-            identities[key] = id
-        end
-        return identities[key] == item.id
+function Recommendations.search(client, source, item, order)
+    local names, known = search_names(item, order)
+    local checked, verification_error = {}, nil
+    local function result(candidate)
+        candidate.source_id, candidate.source, candidate.anilist_id = source.id, source.name, item.id
+        return {matches={candidate}}
     end
-    local function search()
-        for i = 1, math.min(3, #names) do
-            local page, err = client:sourcePage{source=source, mode="SEARCH", page=1,
-                search=names[i], recommendation=true}
-            if not page then return nil, err end
-            -- A tracker already supplies the canonical AniList ID on the source response.
-            for _, candidate in ipairs(page.mangas) do
-                if candidate.id ~= item.origin and candidate.anilist_id == item.id then return candidate end
-            end
-            local alternatives = {}
-            for _, candidate in ipairs(page.mangas) do
-                if candidate.id ~= item.origin and not candidate.anilist_id then
-                    if Titles.contains(names, candidate.title) then
-                        local same, check_err = verify(candidate)
-                        if check_err then return nil, check_err end
-                        if same then return candidate end
-                    else
-                        alternatives[#alternatives+1] = candidate
-                    end
-                end
-            end
-            -- A source can answer a Japanese query with a different localized title.
-            -- Bound extra reverse lookups across the entire source search.
-            for _, candidate in ipairs(alternatives) do
-                if alternate_checks >= 2 then break end
-                if identities[Titles.key(candidate.title)] == nil then
-                    alternate_checks = alternate_checks + 1
-                    local same, check_err = verify(candidate)
-                    if check_err then return nil, check_err end
-                    if same then return candidate end
+    for _, name in ipairs(names) do
+        local page, err = client:sourcePage{source=source, mode="SEARCH", page=1,
+            search=name, recommendation=true}
+        if not page then return nil, err end
+        local candidates, titles = {}, {}
+        for _, candidate in ipairs(page.mangas) do
+            if candidate.id ~= item.origin then
+                if candidate.anilist_id == item.id then return result(candidate) end
+                local key = Titles.key(candidate.title)
+                if not candidate.anilist_id and not checked[key] and #titles < 6
+                    and Titles.contains(known, candidate.title) then
+                    checked[key] = true
+                    titles[#titles+1], candidates[#candidates+1] = candidate.title, candidate
                 end
             end
         end
-        return false
+        if #titles > 0 and not verification_error then
+            local identities, failure = AniList.identify(titles)
+            if identities then
+                for _, candidate in ipairs(candidates) do
+                    if identities[candidate.title] == item.id then return result(candidate) end
+                end
+            else
+                verification_error = failure
+            end
+        end
     end
-    local match, err = search()
-    if err then return nil, err end
-    if match then
-        match.source_id, match.source, match.anilist_id = source.id, source.name, item.id
-    end
-    return {matches=match and {match} or {}, translations=aliases, failed=not match and incomplete or nil}
+    if verification_error then return nil, verification_error end
+    return {matches={}}
 end
 
 function Recommendations.pageResults(snapshot, manga, page, size)

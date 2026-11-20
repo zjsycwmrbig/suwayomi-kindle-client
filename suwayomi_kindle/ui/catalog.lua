@@ -120,7 +120,7 @@ local function fetch_page(home, mode, search, size, target, reset, by_item, reco
     home:request_catalog("source_seek", {source = b.source, mode = mode, size = size,
         search = search, counts = not reset and b.counts or {}, ended = not reset and b.ended,
         target = target, by_item = by_item, recommended_item = recommended_item,
-        search_language = recommended_item and home.settings.recommendation.search_language}, function(data)
+        search_languages = recommended_item and home.settings.recommendation.search_languages}, function(data)
         if data.search and b.query == search then b.query = data.search end
         search = data.search or search
         b.mode, b.search, b.page, b.slice = mode, search, data.remote, data.slice
@@ -537,6 +537,7 @@ function Catalog:build_catalog(screen_width, height, detail_scroll)
     local width = screen_width - inset * 2
     local column = Column:new{align = "left", Space:new{width = scale(browsing_results and 6 or 12)}}
     local recommendations, detail_item
+    local recommendation_inset = scale(6)
     if not self.directory then
         local loading = self.pending and not (browsing_results and self.browse.results)
         note(column, width, loading and "正在从服务器获取数据…" or self.catalog_message)
@@ -571,7 +572,7 @@ function Catalog:build_catalog(screen_width, height, detail_scroll)
         detail_item = self.detail
         self:build_detail(column,width)
         local posters = {detail_item}
-        recommendations = self:build_recommendations(width,height,posters)
+        recommendations = self:build_recommendations(screen_width - 2 * recommendation_inset,height,posters)
         load_posters(self,posters)
     elseif self.selected_tab == "library" then library(self, column, width, size, grid, poster_height)
     else
@@ -590,9 +591,16 @@ function Catalog:build_catalog(screen_width, height, detail_scroll)
         viewport:initState()
         if viewport._is_scrollable then viewport:_scrollBy(0, detail_scroll) end
     end
-    local content = recommendations and Column:new{align="left", viewport, recommendations} or viewport
-    return Frame:new{width = screen_width, height = height, padding = 0, bordersize = 0,
-        padding_left = inset, content}
+    local function in_frame(widget, left, frame_height)
+        return Frame:new{width = screen_width, height = frame_height, padding = 0, bordersize = 0,
+            padding_left = left, widget}
+    end
+    local scroll_frame = in_frame(viewport, inset, scroll_height)
+    if recommendations then
+        return Column:new{align="left", scroll_frame,
+            in_frame(recommendations, recommendation_inset, height - scroll_height)}
+    end
+    return scroll_frame
 end
 
 return Catalog

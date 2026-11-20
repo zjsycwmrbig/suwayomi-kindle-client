@@ -9,7 +9,7 @@ local UI = require("ui/uimanager")
 local Control = Input:extend{}
 
 function Control:init()
-    self.dimen = Geom:new{w=Device.screen:scaleBySize(42),h=Device.screen:scaleBySize(72)}
+    self.dimen = Geom:new{w=Device.screen:scaleBySize(42),h=self.height or Device.screen:scaleBySize(72)}
     self[1] = Center:new{dimen=self.dimen,Icons.widget(self.icon,Device.screen:scaleBySize(20))}
     self.ges_events={
         TapControl={Gesture:new{ges="tap",range=self.dimen}},

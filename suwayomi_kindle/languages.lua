@@ -1,4 +1,18 @@
 local Languages = {}
+local title_languages = {"zh", "en", "ja"}
+
+function Languages.titleOrder(value)
+    local order, seen = {}, {}
+    for code in (value or ""):gmatch("[^,]+") do
+        if (code == "zh" or code == "en" or code == "ja") and not seen[code] then
+            order[#order+1], seen[code] = code, true
+        end
+    end
+    for _, code in ipairs(title_languages) do
+        if not seen[code] then order[#order+1] = code end
+    end
+    return order
+end
 local names = {zh="中文", en="英语", ja="日语", ko="韩语", fr="法语", de="德语", es="西班牙语",
     pt="葡萄牙语", ru="俄语", it="意大利语", ar="阿拉伯语", id="印尼语", vi="越南语",
     th="泰语", tr="土耳其语", pl="波兰语", uk="乌克兰语", multi="多语言", other="其他"}

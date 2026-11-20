@@ -3,6 +3,7 @@ local LuaSettings = require("luasettings")
 local lfs = require("libs/libkoreader-lfs")
 local dump = require("dump")
 local sha256 = require("ffi/sha2").sha256
+local Languages = require("suwayomi_kindle/languages")
 
 local Store = {}
 Store.__index = Store
@@ -15,7 +16,7 @@ local defaults = {
     download = {directory = "", max_parallel = 1, retention = "1"},
     library = {view_mode = "list", sort = "title"},
     browse = {view_mode = "list", language = "zh", sort = "opened"},
-    recommendation = {enabled = true, limit = 24, sources = 3, search_language = "zh"},
+    recommendation = {enabled = true, auto_search = false, limit = 24, sources = 3, search_languages = "zh,en,ja"},
 }
 
 local function fingerprint(settings)
@@ -43,6 +44,11 @@ function Store:load(section)
     for key, value in pairs(defaults[section]) do
         if type(data[key]) == type(value) then values[key] = data[key]
         else values[key] = value end
+    end
+    if section == "recommendation" then
+        local order = type(data.search_languages) == "string" and data.search_languages
+            or type(data.search_language) == "string" and data.search_language or nil
+        values.search_languages = table.concat(Languages.titleOrder(order), ",")
     end
     return values
 end

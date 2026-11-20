@@ -264,7 +264,7 @@ home:set_tab("library")
 home.settings.recommendation.enabled=true
 home.settings.recommendation.limit=5
 home.settings.recommendation.sources=3
-assert(home.settings.recommendation.search_language=="zh")
+assert(home.settings.recommendation.search_languages=="zh,en,ja" and not home.settings.recommendation.auto_search)
 home.detail={id="84",title="原漫画",description="原作简介"}
 home:refresh_detail()
 assert(last_request.action=="detail")
@@ -282,7 +282,7 @@ for i=1,5 do recommendation_items[i]={id=100+i,title="相似漫画 "..i,titles={
 local pending_sources={}
 worker.start=function(_,_,action,input,done)
     if action=="recommendation_source" then
-        assert(input.search_language=="zh")
+        assert(input.search_languages=="zh,en,ja")
         pending_sources[#pending_sources+1]={source=input.source.id,item=input.item.id,done=done}
     elseif action~="covers" then last_request,finish_request={action=action,input=input},done end
     return {cancel=function() end}
@@ -313,6 +313,7 @@ assert(recommendation_y()==fixed_y)
 home.cropping_widget:_scrollBy(0,80)
 assert(recommendation_y()==fixed_y and home.cropping_widget._scroll_offset_y==80)
 local shelf_row=assert(parent_of(home,find(home,"title","推荐漫画 4")))
+assert(shelf_row:getSize().w == device.screen:getWidth()-2*device.screen:scaleBySize(6))
 assert(not shelf_row[1].enabled and shelf_row[#shelf_row].icon=="chevron.right")
 shelf_row[#shelf_row].callback()
 assert(#pending_sources==5 and pending_sources[5].item==105)
@@ -343,10 +344,31 @@ assert(find(home,"title","相似漫画 1")).callback()
 run_deferred()
 assert(home.selected_tab=="browse" and not home.detail and last_request.action=="source_seek")
 assert(last_request.input.mode=="SEARCH" and last_request.input.search=="相似漫画 1")
-assert(last_request.input.recommended_item.id==101 and last_request.input.search_language=="zh")
+assert(last_request.input.recommended_item.id==101 and last_request.input.search_languages=="zh,en,ja")
 finish_request({search="中文译名",remote=1,slice=1,counts={0},ended=true,results={mangas={}}})
 assert(home.browse.query=="中文译名" and home.browse.search=="中文译名")
 home:set_tab("library")
+
+home:set_tab("settings")
+home.settings_route="recommendation"
+home:refresh()
+assert(find(home,"label","☐  自动搜索相似漫画")).callback()
+assert(store:load("recommendation").auto_search)
+local pins = source_controls("pin")
+assert(#pins==3 and not pins[1].enabled)
+pins[3]:onTapControl()
+assert(store:load("recommendation").search_languages=="ja,zh,en")
+source_controls("move_down")[1]:onTapControl()
+assert(store:load("recommendation").search_languages=="zh,ja,en")
+source_controls("move_up")[3]:onTapControl()
+assert(store:load("recommendation").search_languages=="zh,en,ja")
+home:set_tab("library")
+home:open_detail({id="88",title="自动搜索测试"})
+assert(last_request.action=="detail")
+finish_request({anilist_id=789})
+assert(last_request.action=="anilist_recommend" and last_request.input.id==789)
+home:catalog_back()
+home.settings.recommendation.auto_search=false
 worker.start = worker_start
 
 home.detail = {id="41",title="测试漫画",source="测试源",description="简介内容",chapters=32,in_library=true,status="ON_HIATUS"}

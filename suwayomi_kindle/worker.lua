@@ -12,7 +12,7 @@ function Worker.run(config, action, input)
     local client, err = Connection.open(config)
     if not client then return nil, err end
     if action == "recommendation_source" then
-        return require("suwayomi_kindle/recommendations").search(client,input.source,input.item,input.search_language)
+        return require("suwayomi_kindle/recommendations").search(client,input.source,input.item,input.search_languages)
     end
     if action == "sync_push" then
         return require("suwayomi_kindle/records").push(Index.new(config),client,input.cutoff)
