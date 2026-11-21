@@ -87,11 +87,14 @@ end
 function Navigation.install(plugin)
     local row=plugin.reading_chapter
     local reader=plugin.ui
-    if not row or not reader.status or not reader.toc then return end
+    if not row or not reader.status or not reader.toc or not reader.paging
+        or type(reader.paging.onGotoPageRel)~="function" then return end
     local status,toc=reader.status,reader.toc
+    local paging=reader.paging
     local original_end,original_toc=status.onEndOfBook,toc.onShowToc
-    local function finish(native,...)
-        if plugin.reading_chapter~=row then return original_end(native,...) end
+    local original_page_turn=paging.onGotoPageRel
+    local function advance(native)
+        if not native or not reader.document then return true end
         if plugin.chapter_intent then return true end
         local next_chapter,err=Chapters.locate(row.index,row.manga,row.id,1)
         if err then notice(err); return true end
@@ -104,15 +107,40 @@ function Navigation.install(plugin)
         else notice("已读完本漫画的最后一章。") end
         return true
     end
+    local function finish(native,...)
+        if plugin.reading_chapter~=row then return original_end(native,...) end
+        return advance(native)
+    end
+    local function page_turn(native,diff,no_page_turn,...)
+        if plugin.reading_chapter~=row or no_page_turn then
+            return original_page_turn(native,diff,no_page_turn,...)
+        end
+        if diff<=0 or native.current_page<native.number_of_pages then
+            return original_page_turn(native,diff,no_page_turn,...)
+        end
+        local visible,area=native.visible_area,native.page_area
+        local at_right=visible.x+visible.w>=area.x+area.w-1
+        local at_bottom=visible.y+visible.h>=area.y+area.h-1
+        if not at_right or not at_bottom then
+            return original_page_turn(native,diff,no_page_turn,...)
+        end
+        -- Swallow the native EndOfBook path. It continues panning and repaints
+        -- the finished page after the document starts closing, which is the
+        -- visible close/reopen flash. The next switch can now replace the
+        -- document while the final page is still on screen.
+        return advance(status)
+    end
     local function contents(native,...)
         if plugin.reading_chapter~=row then return original_toc(native,...) end
         return Navigation.contents(plugin)
     end
     status.onEndOfBook,toc.onShowToc=finish,contents
+    paging.onGotoPageRel=page_turn
     plugin.release_chapter_navigation=function()
         cancel_intent(plugin)
         if status.onEndOfBook==finish then status.onEndOfBook=original_end end
         if toc.onShowToc==contents then toc.onShowToc=original_toc end
+        if paging.onGotoPageRel==page_turn then paging.onGotoPageRel=original_page_turn end
     end
 end
 
