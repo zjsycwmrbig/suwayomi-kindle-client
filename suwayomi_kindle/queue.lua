@@ -4,6 +4,7 @@ local UI = require("ui/uimanager")
 local Worker = require("suwayomi_kindle/worker")
 local Downloads = require("suwayomi_kindle/downloads")
 local Tasks = require("suwayomi_kindle/tasks")
+local Log = require("suwayomi_kindle/repair_log")
 local Queue = {}
 local sessions = {}
 
@@ -37,6 +38,7 @@ end
 function Queue.askRepair(q,job,details,reason)
     local function answer(accept)
         if Downloads.confirmRepair(q.index,job,accept) then
+            Log.add(q.index,job,accept and "已确认换源" or "已取消换源")
             if not accept then Queue.notify(q,job,nil,reason) end
             redraw(q,job.manga)
             Queue.start(q)
@@ -63,6 +65,7 @@ function Queue.start(q,resume)
             q.active=q.active+1
             started=true
             q.jobs[job.ticket]=job
+            if job.repair then Log.add(q.index,job,"开始搜索备用源") end
             job.handle=Worker.start(UI,q.config,"download",job,function(data,err)
                 if not q.jobs[job.ticket] then return end
                 q.jobs[job.ticket]=nil
@@ -72,6 +75,13 @@ function Queue.start(q,resume)
                 local offline=not job.repair and err and (err:find("无法连接服务器",1,true)
                     or err:find("连接超时",1,true) or err:find("认证失败",1,true))
                 local decision=source_error and not offline and Downloads.sourceFailure(q.index,job,q.settings,err)
+                if job.repair then
+                    Log.add(q.index,job,data and "换源下载成功" or ("换源下载失败 · "..(err or "未知原因")))
+                elseif decision then
+                    local message = ({retry="原源失败，准备重试",ask="等待手动确认换源",
+                        repair="已加入自动换源队列",failed="原源失败，未启动换源"})[decision.action]
+                    Log.add(q.index,job,message.." · "..err)
+                end
                 if not decision or decision.action=="failed" then
                     Downloads.finish(q.index,job,not data and (err or "下载失败。") or nil)
                     Queue.notify(q,job,data,err)

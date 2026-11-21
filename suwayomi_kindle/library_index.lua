@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(1000)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 15 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 16 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -117,7 +117,10 @@ local function with_db(index, action)
                 db:prepare([[CREATE TRIGGER IF NOT EXISTS remove_repair_match AFTER DELETE ON manga
                     BEGIN DELETE FROM repair_match WHERE manga=OLD.id; END]]):step()
             end
-            db:exec("PRAGMA user_version=15; COMMIT")
+            if version < 16 then
+                db:exec("CREATE TABLE repair_log(seq INTEGER PRIMARY KEY, at INTEGER NOT NULL, chapter TEXT NOT NULL, message TEXT NOT NULL)")
+            end
+            db:exec("PRAGMA user_version=16; COMMIT")
         end
         return action(db)
     end)

@@ -70,6 +70,14 @@ job=claim()
 assert(not job.repair and not job.remote_id)
 assert(Chapters.download(index,server,job).path==path and calls==1)
 assert(Repair.select(index,server,job).reused and calls==1)
+local Log=require("suwayomi_kindle/repair_log")
+local entries=assert(Log.recent(index))
+assert(entries[1]:find("复用上次匹配 · B · 第076话",1,true))
+assert(table.concat(entries):find("Flash 选择 · B · 第076话",1,true))
+for i=1,101 do assert(Log.add(index,job,"记录 "..i)) end
+entries=assert(Log.recent(index))
+assert(#entries==100 and entries[1]:match("记录 101$") and entries[100]:match("记录 2$"))
+assert(entries[1]:find("测试书 · 第76话",1,true))
 Flash.choose,Flash.configured=chosen,configured
 assert(Tasks.deleteFiles(index,{{manga="7",id=76,path=path}},temp).count==1)
 for _,mode in ipairs({"auto","all"}) do

@@ -2,6 +2,7 @@ local json = require("dkjson")
 local Flash = require("suwayomi_kindle/deepseek")
 local Sources = require("suwayomi_kindle/browse_sources")
 local Titles = require("suwayomi_kindle/manga_titles")
+local Log = require("suwayomi_kindle/repair_log")
 local Repair = {}
 
 -- Cache discovery for adjacent failed chapters, never a permanent chapter substitution.
@@ -121,6 +122,7 @@ function Repair.select(index,client,job,exclude)
         if s.id~=m.source.id then
             used=used+1
             local works,source_error=discover(index,client,s,target,aliases)
+            local before = #candidates
             last_error=source_error or last_error
             for _,work in ipairs(works or {}) do
                 for pos,c in ipairs(work.chapters) do
@@ -141,6 +143,8 @@ function Repair.select(index,client,job,exclude)
                 end
                 if #candidates>=8 then break end
             end
+            local summary = string.format("%s · 找到 %d 个候选章节", s.name, #candidates-before)
+            Log.add(index,job,source_error and (summary.." · "..source_error) or summary)
             if used>=limit or #candidates>=8 then break end
         end
     end
@@ -151,7 +155,10 @@ function Repair.select(index,client,job,exclude)
         local pages,reason=require("suwayomi_kindle/chapters").pages(client,match.manga,match.id)
         if pages then
             match.pages=pages
-            if match.reused then return match end
+            if match.reused then
+                Log.add(index,job,"复用上次匹配 · "..candidates[i].source.." · "..match.name)
+                return match
+            end
             available[#available+1]=match
             choices[#choices+1]=candidates[i]
         else
@@ -160,6 +167,9 @@ function Repair.select(index,client,job,exclude)
     end
     if #available==0 then return nil,"备用章节均无法取页："..(last_failure or "没有可下载的漫画页。") end
     local selected,reason=Flash.choose(target,choices)
+    if selected then
+        Log.add(index,job,"Flash 选择 · "..choices[selected].source.." · "..choices[selected].chapter)
+    end
     return available[selected],reason
 end
 

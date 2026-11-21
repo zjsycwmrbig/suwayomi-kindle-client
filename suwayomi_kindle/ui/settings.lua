@@ -256,6 +256,16 @@ function methods:build_repair_settings(screen_width,height)
     count("最多搜索备用源","repair_sources",1,10)
     toggle("自动下载失败时换源","repair_auto")
     toggle("批量下载失败时换源","repair_batch")
+    column[#column+1]=SettingRow:new{label="换源日志",value="最近 100 条",width=width,
+        callback=function()
+            local entries, err
+            if self.settings.connection.server_url ~= "" then
+                entries, err = require("suwayomi_kindle/repair_log").recent(self:local_index())
+            end
+            local text = entries and #entries > 0 and table.concat(entries,"\n\n") or err or "暂无换源记录。"
+            UI:show(require("ui/widget/textviewer"):new{title="换源日志",text=text})
+        end}
+    column[#column+1]=rule(width)
     column[#column+1]=SettingRow:new{label="DeepSeek 密钥",width=width,value=flash.configured() and "已配置" or "未配置",
         callback=function()
             local dialog
