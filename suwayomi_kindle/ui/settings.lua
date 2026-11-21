@@ -427,7 +427,8 @@ function methods:onCloseDialog()
         self:close_drawer()
     elseif self.selected_tab=="tasks" and self.task_folder then
         self:leave_task_folder()
-    elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
+    elseif self.selected_tab ~= "settings" and (self.detail
+        or (self.selected_tab == "browse" and (self.browse.global or self.browse.source))) then
         self:catalog_back()
     elseif self.selected_tab == "settings" and self.settings_route ~= "index" then
         self.settings_route = (self.settings_route == "languages" or self.settings_route == "recommendation") and "browse" or "index"

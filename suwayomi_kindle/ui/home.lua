@@ -174,7 +174,8 @@ function Home:page_title()
     elseif self.detail then
         return "漫画详情"
     elseif self.selected_tab == "browse" then
-        return self.browse.source and self.browse.source.name or "探索"
+        return self.browse.global and "全源搜索"
+            or self.browse.source and self.browse.source.name or "探索"
     end
     return "书架"
 end
@@ -213,7 +214,8 @@ function Home:refresh()
         end
     elseif self.selected_tab=="tasks" and self.task_folder then
         on_back=function() self:leave_task_folder() end
-    elseif self.selected_tab ~= "settings" and (self.detail or (self.selected_tab == "browse" and self.browse.source)) then
+    elseif self.selected_tab ~= "settings" and (self.detail
+        or (self.selected_tab == "browse" and (self.browse.source or self.browse.global))) then
         on_back = function() self:catalog_back() end
     end
     local actions = self:catalog_actions()

@@ -29,10 +29,12 @@ local Catalog = {}
 local function scale(n) return Screen:scaleBySize(n) end
 
 function Catalog:reset_browse()
-    self.browse = {sources_page = 1, mode = "POPULAR", page = 1, slice = 1, auto_open = true}
+    self.browse = {sources_page = 1, mode = "POPULAR", page = 1, slice = 1,
+        auto_open = true, global_query = ""}
 end
 
 function Catalog:cancel_catalog()
+    self:cancel_global_search(false)
     self:cancel_recommendations()
     if self.pending == "sources" and not self.all_sources then self.browse.requested = false end
     if self.pending == "library" then self.shelf_requested = false end
@@ -72,6 +74,9 @@ function Catalog:catalog_back()
         local previous = self.detail_stack and table.remove(self.detail_stack)
         self.detail = previous and previous.item or nil
         self.recommendation_view = previous and previous.view or nil
+    elseif self.browse.global then
+        self:cancel_global_search(true)
+        self.browse.auto_open = false
     else
         self.browse.source, self.browse.results = nil, nil
         self.browse.auto_open = false
@@ -112,13 +117,111 @@ local function refresh_shelf(home)
     end)
 end
 
-function Catalog:fetch_sources()
+function Catalog:fetch_sources(global_query)
     local b = self.browse
     b.requested = true
     self:request_catalog("sources", {language = "all"}, function(data)
         self.all_sources = data.sources
         b.sources_page = 1
+        if global_query then self:start_global_search(global_query) end
     end)
+end
+
+function Catalog:global_search_state()
+    return self.browse and self.browse.global
+end
+
+function Catalog:cancel_global_search(clear)
+    local state = self:global_search_state()
+    if not state then return end
+    state.paused = not state.done
+    state.token = nil
+    if state.job then state.job:cancel(); state.job = nil end
+    state.current = nil
+    if clear then self.browse.global = nil end
+end
+
+function Catalog:next_global_search()
+    local state = self:global_search_state()
+    if not state or state.draft or state.done or state.paused or state.token then return end
+    local source = state.sources[state.index]
+    if not source then
+        state.done = true
+        self:refresh()
+        return
+    end
+    local token = {}
+    state.current, state.token = source, token
+    self:refresh()
+    local job = Worker.start(UI, self.settings.connection, "source_page",
+        {source=source,mode="SEARCH",page=state.remote_page,search=state.query}, function(data, err)
+            if self.browse.global ~= state or state.token ~= token then return end
+            state.job, state.current, state.token = nil, nil, nil
+            state.index = state.index + 1
+            if data then
+                local added = false
+                for _, item in ipairs(data.mangas or {}) do
+                    if not state.seen[item.id] then
+                        state.seen[item.id], added = true, true
+                        item.source, item.global_source = source.name, true
+                        state.results[#state.results+1] = item
+                    end
+                end
+                if data.has_next and added then
+                    state.more[#state.more+1] = source
+                end
+            else
+                state.failed = state.failed + 1
+                state.last_error = source.name .. " · " .. tostring(err)
+            end
+            UI:nextTick(function()
+                if self.browse.global == state then self:next_global_search() end
+            end)
+        end)
+    if state.token == token then state.job = job end
+end
+
+function Catalog:toggle_global_search()
+    local state = self:global_search_state()
+    if not state then return end
+    if state.done then return end
+    if state.paused then
+        state.paused = false
+        self:next_global_search()
+    else
+        self:cancel_global_search(false)
+        self:refresh()
+    end
+end
+
+function Catalog:global_search_entry(query)
+    self:cancel_catalog()
+    self.browse.auto_open = false
+    self.catalog_message = nil
+    self.browse.global = {draft=true, query=query or self.browse.global_query}
+    if query and query ~= "" then self:start_global_search(query) else self:refresh() end
+end
+
+function Catalog:start_global_search(query)
+    query = require("suwayomi_kindle/config").trim(query or "")
+    if query == "" then
+        UI:show(require("ui/widget/infomessage"):new{text="请输入全源搜索关键词。",timeout=2})
+        return
+    end
+    self.browse.global_query = query
+    if not self.all_sources then
+        self:fetch_sources(query)
+        return
+    end
+    self:cancel_catalog()
+    self.detail,self.directory,self.reader_origin = nil,nil,nil
+    self.detail_stack,self.recommendation_view = nil,nil
+    local history=self:source_history_data()
+    local sources=BrowseSources.list(self.all_sources,"all",nil,
+        self.settings.browse.sort,self:source_pins(),history.opened)
+    self.browse.global={query=query,sources=sources,index=1,results={},failed=0,
+        seen={},more={},remote_page=1,page=1}
+    self:next_global_search()
 end
 
 local function fetch_page(home, mode, search, size, target, reset, by_item, recommended_item)
@@ -196,6 +299,19 @@ end
 function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
     if self.selected_tab == "tasks" then return self:task_actions() end
+    local exploring = self.selected_tab == "browse" and not self.detail and not self.directory
+    local global_entry = {icon="search", "全源搜索", function() self:global_search_entry() end}
+    if exploring and self.browse.global then
+        local state = self.browse.global
+        local actions={}
+        if not state.draft and not state.done then
+            actions[#actions+1]={icon=state.paused and "play" or "pause",
+                state.paused and "继续全源搜索" or "暂停全源搜索",
+                function() self:toggle_global_search() end}
+        end
+        actions[#actions+1]={icon="close","退出全源搜索",function() self:catalog_back() end}
+        return actions
+    end
     local source = not self.detail and self.selected_tab == "browse" and self.browse.source
     local pin
     if source then
@@ -212,6 +328,7 @@ function Catalog:catalog_actions()
             self:refresh()
         end}
         if self.pending=="library" then return shelf_actions(self,cancel) end
+        if exploring then return {global_entry,cancel,pin} end
         return {cancel,pin}
     end
     if self.directory then
@@ -238,8 +355,8 @@ function Catalog:catalog_actions()
         return shelf_actions(self,{icon="refresh","从服务器刷新",function() refresh_shelf(self) end})
     end
     local b = self.browse
-    if not b.source then return {{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end}} end
-    return {pin,{icon = "browse", "切换漫画源", function() self:catalog_back() end},
+    if not b.source then return {global_entry,{icon = "refresh", "刷新漫画源", function() self:fetch_sources() end}} end
+    return {global_entry,pin,{icon = "browse", "切换漫画源", function() self:catalog_back() end},
         {icon = "refresh", "刷新结果", function() fetch_page(self, b.mode, b.search, self.catalog_size, 1, true) end}}
 
 end
@@ -260,29 +377,47 @@ function Catalog:source_history_data()
 end
 
 -- The same inline field searches installed sources or the selected source.
-local function search_bar(home, column, width, source, submit, shelf)
+local function search_bar(home, column, width, source, submit, shelf, options)
+    options = options or {}
     local b = shelf or home.browse
-    local key = (shelf or source) and "query" or "source_query"
+    local key = options.key or ((shelf or source) and "query" or "source_query")
     local initial_query = b[key] or ""
-    local button_w, gap = scale(58), scale(6)
+    local gap = scale(6)
+    local button_w = options.button_width or scale(58)
+    local secondary_w = options.secondary and (options.secondary_width or scale(58)) or 0
     local padding, border = scale(6), scale(1)
     local field
-    local function apply()
-        local text = require("suwayomi_kindle/config").trim(field:getText():gsub("[\r\n]", ""))
-        home:finish_field()
-        submit(text)
+    local function text()
+        return require("suwayomi_kindle/config").trim(field:getText():gsub("[\r\n]", ""))
     end
-    field = InputText:new{parent = home, focused = false, width = width - button_w - gap - 2*(padding+border),
+    local function apply()
+        local query = text()
+        home:finish_field()
+        submit(query)
+    end
+    field = InputText:new{parent = home, focused = false,
+        width = width - button_w - secondary_w - gap*(secondary_w > 0 and 2 or 1) - 2*(padding+border),
         height = scale(24), padding = padding, margin = 0, bordersize = border, scroll = true,
-        text = initial_query, hint = shelf and "搜索书名或作者" or source and "在这个源中搜索漫画" or "查找漫画源",
+        text = initial_query,
+        hint = options.hint or (shelf and "搜索书名或作者" or source and "在这个源中搜索漫画" or "查找漫画源"),
         face = Font:getFace("smallinfofont", 16), enter_callback = apply}
     home:bind_keyboard_close(field)
     home.input_form = {fields = {}, capture = function()
         local text = field:getText()
         if text ~= initial_query then b[key] = text end
     end}
-    column[#column+1] = Row:new{field, Gap:new{width = gap},
-        Button.new{text = "搜索", compact = true, width = button_w, show_parent = home, callback = apply}}
+    local row = Row:new{field, Gap:new{width = gap},
+        Button.new{text = options.button or "搜索", compact = true, width = button_w, show_parent = home, callback = apply}}
+    if options.secondary then
+        row[#row+1] = Gap:new{width = gap}
+        row[#row+1] = Button.new{text = options.secondary, compact = true, width = secondary_w,
+            show_parent = home, callback = function()
+                local value = text()
+                home:finish_field()
+                options.secondary_callback(value)
+            end}
+    end
+    column[#column+1] = row
 end
 
 local function note(column, width, value)
@@ -322,7 +457,7 @@ end
 
 local function restore_browse_source(home)
     local b = home.browse
-    if not b.auto_open or not home.all_sources or home.pending then return end
+    if b.global or not b.auto_open or not home.all_sources or home.pending then return end
     b.auto_open = false
     local source = BrowseSources.landing(home.all_sources, home.settings.browse.language, home:source_history_data(),
         home:source_pins())
@@ -381,8 +516,11 @@ local function manga_list(home, column, width, items, grid, poster_height)
             if shelf then
                 subtitle = item.author and item.author:match("%S") and item.author or "作者未知"
                 badge, short_badge = require("suwayomi_kindle/progress").badge(item.chapters, item.unread)
-            elseif item.author and item.author:match("%S") then
-                subtitle = item.author
+            else
+                local credits={}
+                if item.author and item.author:match("%S") then credits[#credits+1]=item.author end
+                if item.global_source and item.source and item.source~="" then credits[#credits+1]=item.source end
+                if #credits>0 then subtitle=table.concat(credits," · ") end
             end
             tiles[#tiles + 1] = Tile:new{width = math.floor(width / 3), title = item.title, subtitle = subtitle,
                 badge = badge, short_badge = short_badge, status_badge = status,
@@ -393,7 +531,8 @@ local function manga_list(home, column, width, items, grid, poster_height)
                 width = scale(46), height = scale(65)}
                 or Icons.widget("library", scale(28))
             local credits = {}
-            for _,key in ipairs(shelf and {"author","source"} or {"author"}) do
+            local keys = shelf and {"author","source"} or item.global_source and {"author","source"} or {"author"}
+            for _,key in ipairs(keys) do
                 if item[key] and item[key] ~= "" then credits[#credits+1] = item[key] end
             end
             if shelf then chapters = chapters .. " · " .. (item.downloaded or 0) .. " 已下载" end
@@ -442,7 +581,8 @@ local function sources(home, column, width, size)
     search_bar(home, column, width, false, function(query)
         b.filter, b.sources_page = query:lower(), 1
         home:refresh()
-    end)
+    end,nil,{button="筛选源",hint="输入源名或漫画名",secondary="全源搜索",secondary_width=scale(88),
+        secondary_callback=function(query) home:global_search_entry(query) end})
     if not b.requested and not home.all_sources then
         b.requested = true
         defer(home, function() home:fetch_sources() end)
@@ -497,7 +637,8 @@ local function source_controls(home, column, width)
     })
     search_bar(home, column, width, true, function(query)
         fetch_page(home, query ~= "" and "SEARCH" or "POPULAR", query ~= "" and query or nil, home.catalog_size, 1, true)
-    end)
+    end,nil,{button="搜本源",secondary="全源搜索",secondary_width=scale(88),
+        secondary_callback=function(query) home:global_search_entry(query) end})
 end
 
 local function source_manga(home, column, width, size, grid, poster_height)
@@ -530,7 +671,59 @@ local function source_manga(home, column, width, size, grid, poster_height)
     manga_list(home, column, width, items, grid, poster_height)
 end
 
-local function grid_layout(width, available, captions)
+local grid_layout
+
+local function global_search_view(home, column, width, height, grid)
+    local state = home.browse.global
+    if state.draft then
+        search_bar(home, column, width, false, function(query) home:start_global_search(query) end,
+            state, {button="搜索",hint="输入漫画名，搜索所有已安装的源"})
+        note(column, width, home.pending and "正在获取漫画源…" or home.catalog_message)
+        return
+    end
+    local total = #state.sources
+    local status = string.format("「%s」 · %d 部 · %d/%d 个源",state.query,#state.results,state.index-1,total)
+    if state.paused then status = status .. " · 已暂停"
+    elseif state.current then status = status .. " · " .. state.current.name
+    else status = status .. " · 完成" end
+    if state.failed > 0 then status = status .. " · 失败 " .. state.failed end
+    note(column, width, status)
+    local actions = {}
+    if not state.done then
+        actions[1] = {state.paused and "继续" or "暂停",function() home:toggle_global_search() end}
+    elseif #state.more > 0 then
+        actions[1] = {"加载更多结果",function()
+            state.sources, state.more = state.more, {}
+            state.remote_page, state.index, state.done = state.remote_page+1, 1, false
+            home:next_global_search()
+        end}
+    end
+    actions[#actions+1] = {"重新搜索",function() home:global_search_entry() end}
+    buttons(home,column,width,actions)
+    local used = 0
+    for _,widget in ipairs(column) do used = used + widget:getSize().h end
+    local available = math.max(1,height-used)
+    local size, poster_height
+    if grid then size,poster_height=grid_layout(width,available,68)
+    else size,poster_height=math.max(1,math.floor(available/scale(72))),nil end
+    if #state.results == 0 then
+        local message = state.done and (state.last_error or "没有找到匹配漫画。")
+            or state.paused and "搜索已暂停。"
+            or "正在等待搜索结果…"
+        note(column,width,message)
+        home.pagination=nil
+        return
+    end
+    local items,page,pages=slice(state.results,state.page,size)
+    state.page=page
+    manga_list(home,column,width,items,grid,poster_height)
+    home.pagination={page=page,total=pages,page_size=size,item_count=#state.results,go=function(n)
+        state.page=n
+        home:refresh()
+    end}
+end
+
+grid_layout = function(width, available, captions)
     local ideal = math.floor((width / 3 - scale(10)) / 0.71)
     captions = scale(captions or 54)
     local rows = math.max(1, math.floor(available / (ideal + captions) + 0.5))
@@ -539,13 +732,14 @@ end
 
 function Catalog:build_catalog(screen_width, height, detail_scroll)
     local browsing = self.selected_tab == "browse" and not self.detail
-    local browsing_results = browsing and self.browse.source
-    local inset = scale(browsing_results and 12 or 24)
+    local global_search = browsing and self.browse.global
+    local browsing_results = browsing and self.browse.source and not global_search
+    local inset = scale((browsing_results or global_search) and 12 or 24)
     local width = screen_width - inset * 2
-    local column = Column:new{align = "left", Space:new{width = scale(browsing_results and 6 or 12)}}
+    local column = Column:new{align = "left", Space:new{width = scale((browsing_results or global_search) and 6 or 12)}}
     local recommendations, detail_item
     local recommendation_inset = scale(6)
-    if not self.directory then
+    if not self.directory and not global_search then
         local loading = self.pending and not (browsing_results and self.browse.results)
         note(column, width, loading and "正在从服务器获取数据…" or self.catalog_message)
     end
@@ -583,9 +777,12 @@ function Catalog:build_catalog(screen_width, height, detail_scroll)
         load_posters(self,posters)
     elseif self.selected_tab == "library" then library(self, column, width, size, grid, poster_height)
     else
-        restore_browse_source(self)
-        if browsing_results then source_manga(self, column, width, size, grid, poster_height)
-        else sources(self, column, width, size) end
+        if global_search then global_search_view(self,column,width,height,grid)
+        else
+            restore_browse_source(self)
+            if browsing_results then source_manga(self, column, width, size, grid, poster_height)
+            else sources(self, column, width, size) end
+        end
     end
     local scroll_height = height - (recommendations and recommendations:getSize().h or 0)
     local viewport = Scroll:new{dimen = Geom:new{w = width + Scroll:getScrollbarWidth(), h = scroll_height},
