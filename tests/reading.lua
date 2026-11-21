@@ -86,9 +86,21 @@ assert(Downloads.configure(index,m,"retention","never"))
 mark(4,"before",true)
 assert(Downloads.clean(index,m,"0",false).count==0)
 assert(Downloads.configure(index,m,"retention","1"))
-assert(Downloads.clean(index,m,"never",false,paths[1]).count==2)
+local retained=assert(Downloads.clean(index,m,"never",false,paths[1]))
+assert(retained.count==2 and retained.kept>=1 and retained.failed==0 and retained.retention=="1")
 assert(Downloads.clean(index,m,"never",true,paths[1]).count==1)
 assert(Downloads.clean(index,m,"never",true).count==1)
 for _,path in ipairs(paths) do assert(not require("libs/libkoreader-lfs").attributes(path)) end
+-- Marking a queued chapter read cancels the stale download before it can
+-- recreate a file that the retention policy just removed.
+assert(index:with_db(function(db)
+    db:prepare("UPDATE chapter SET is_read=0 WHERE manga=? AND id=8"):bind(m):step()
+    return true
+end))
+assert(Downloads.enqueue(index,m,"single",8).count==1)
+mark(8,"single",true)
+assert(index:with_db(function(db)
+    return not db:prepare("SELECT 1 FROM queue WHERE manga=? AND id=8"):bind(m):step()
+end))
 require("ffi/util").purgeDir(temp)
 print("Offline records, sync conflicts, partial failure, queue windows and local cleanup passed")

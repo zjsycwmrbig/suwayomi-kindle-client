@@ -19,7 +19,7 @@ local function with_db(index, action)
     local opened, db = pcall(SQLite.open, index.path)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
-        db:set_busy_timeout(300)
+        db:set_busy_timeout(1000)
         if tonumber(db:rowexec("PRAGMA user_version")) < 13 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))

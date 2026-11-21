@@ -88,7 +88,7 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
     local policy,err = Downloads.policy(index,manga)
     if not policy then return nil,err end
     local keep = manual and 0 or tonumber(policy.retention == "inherit" and global or policy.retention)
-    if not keep then return {count=0,failed=0} end
+    if not keep then return {count=0,failed=0,kept=0,missing=0,retention="never"} end
     local scope = assert(index.path:match("/(%x+)%.sqlite3$"))
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
@@ -99,8 +99,9 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
             ORDER BY COALESCE(t.at,0) DESC,c.pos DESC]]):bind(manga):rows() do
             rows[#rows+1]={id=tonumber(r[1]),path=r[2],bytes=tonumber(r[3]),mtime=tonumber(r[4]),inode=r[5]}
         end
-        local count,failed,kept=0,0,0
+        local count,failed,kept,missing=0,0,0,0
         local forget=db:prepare("DELETE FROM files WHERE manga=? AND id=? AND path=?")
+        local forget_queue=db:prepare("DELETE FROM queue WHERE manga=? AND id=?")
         for _,r in ipairs(rows) do
             local suffix="/Suwayomi/" .. scope .. "/" .. manga .. "/" .. r.id .. ".cbz"
             local stat,_,errno=lfs.symlinkattributes(r.path)
@@ -108,11 +109,14 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
             local replaced=stat and r.bytes and (r.bytes~=stat.size or r.mtime~=stat.modification or r.inode~=tostring(stat.ino))
             if not mode and errno==2 then
                 forget:reset():bind(manga,r.id,r.path):step()
+                missing=missing+1
             elseif r.path:sub(-#suffix)~=suffix or mode~="file" or replaced then failed=failed+1
             elseif kept<keep then kept=kept+1
+            elseif r.path==open_path or r.path==destination then kept=kept+1
             elseif r.path~=open_path and r.path~=destination then
                 if os.remove(r.path) then
                     forget:reset():bind(manga,r.id,r.path):step()
+                    forget_queue:reset():bind(manga,r.id):step()
                     count=count+1
                 else failed=failed+1 end
             end
@@ -120,7 +124,7 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
         db:prepare("DELETE FROM file_stamp WHERE manga=? AND id NOT IN (SELECT id FROM files WHERE manga=?)")
             :bind(manga,manga):step()
         db:exec("COMMIT")
-        return {count=count,failed=failed}
+        return {count=count,failed=failed,kept=kept,missing=missing,retention=policy.retention}
     end)
 end
 

@@ -169,14 +169,28 @@ function Manga:queue_chapters(mode,id)
     if mode ~= "auto" then self.catalog_message = string.format("已安排 %d 章下载",result.count) end
 end
 
-function Manga:clean_chapters(manual)
+function Manga:clean_chapters(manual, notify)
     local reader=require("apps/reader/readerui").instance
     local path=reader and reader.document and reader.document.file
     local result,err=Downloads.clean(self:local_index(),self.detail.id,self.settings.download.retention,manual,path)
-    if not result then self.catalog_message=err
-    elseif manual or result.failed>0 then
-        self.catalog_message=string.format("已删除 %d 章，失败 %d 章",result.count,result.failed)
+    if not result then self.catalog_message="删除失败：" .. (err or "未知错误")
+    elseif manual or notify or result.failed>0 then
+        if result.count>0 then
+            self.catalog_message=string.format("已删除 %d 章，失败 %d 章",result.count,result.failed)
+        elseif result.kept>0 and result.failed==0 then
+            self.catalog_message="当前阅读的章节已保留，没有其他可删除章节。"
+        elseif result.failed>0 then
+            self.catalog_message=string.format("没有删除文件，失败 %d 项。可能文件已被修改或路径不属于本账号。",result.failed)
+        elseif result.retention=="never" then
+            self.catalog_message="当前删除策略为“不删除”。"
+        else
+            self.catalog_message="没有可删除的已读下载。"
+        end
     end
+    if notify or (result and result.failed>0) then
+        UI:show(require("ui/widget/infomessage"):new{text=self.catalog_message,timeout=4})
+    end
+    return result
 end
 
 local function confirm(text,callback)
@@ -193,7 +207,7 @@ function Manga:add_download_actions(actions)
                 local ok,err=Downloads.configure(index,manga,key,entry[1])
                 if not ok then self.catalog_message=err
                 elseif key=="ahead" then self:queue_chapters("auto")
-                else self:clean_chapters(false) end
+                else self:clean_chapters(false,true) end
                 self:refresh()
             end,icon=policy and policy[key]==entry[1] and "check" or nil}
         end
@@ -206,7 +220,7 @@ function Manga:add_download_actions(actions)
         confirm("下载《" .. self.detail.title .. "》的全部缺失章节？",function() self:queue_chapters("all"); self:refresh() end)
     end}
     actions[#actions+1]={icon="trash","删除已读",function()
-        confirm("删除本漫画所有已读章节的本地 CBZ？",function() self:clean_chapters(true); self:refresh() end)
+        confirm("删除本漫画所有已读章节的本地 CBZ？",function() self:clean_chapters(true,true); self:refresh() end)
     end}
     actions[#actions+1]={"删除策略",children=function()
         return options("retention",{{"inherit","跟随全局"},{"never","不删除"},{"0","直接删除"},
@@ -222,7 +236,7 @@ function Manga:chapter_actions(row)
             self.detail.unread,self.detail.first_unread_id=result.unread,nil
             self.catalog_message=string.format("已更新 %d 章，可在设置中同步",result.changes)
             if result.changes>0 then require("suwayomi_kindle/sync_service").schedule(self:local_index(),self.settings.connection) end
-            if read then self:clean_chapters(false) end
+            if read then self:clean_chapters(false,false) end
             self:queue_chapters("auto")
         else self.catalog_message=err end
         self:refresh()

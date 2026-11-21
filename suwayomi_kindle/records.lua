@@ -21,10 +21,12 @@ function Records.mark(index, manga, chapter, range, read, page)
             COALESCE(?,(SELECT page FROM pending WHERE manga=? AND id=?)))]])
         local update = db:prepare("UPDATE chapter SET is_read=COALESCE(?,is_read),last_page=COALESCE(?,last_page) WHERE manga=? AND id=?")
         local finish = db:prepare("INSERT OR REPLACE INTO finished VALUES(?,?,?)")
+        local cancel = db:prepare("DELETE FROM queue WHERE manga=? AND id=?")
         for _,id in ipairs(changes) do
             pending:reset():bind(manga,id,value,manga,id,page,manga,id):step()
             update:reset():bind(value,page,manga,id):step()
             if read then finish:reset():bind(manga,id,os.time()):step() end
+            if read then cancel:reset():bind(manga,id):step() end
         end
         local unread = tonumber(db:prepare("SELECT count(*) FROM chapter WHERE manga=? AND is_read=0"):bind(manga):step()[1])
         db:prepare("UPDATE manga SET unread=? WHERE id=?"):bind(unread,manga):step()
