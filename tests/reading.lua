@@ -88,6 +88,8 @@ assert(Downloads.clean(index,m,"0",false).count==0)
 assert(Downloads.configure(index,m,"retention","1"))
 local retained=assert(Downloads.clean(index,m,"never",false,paths[1]))
 assert(retained.count==2 and retained.kept>=1 and retained.failed==0 and retained.retention=="1")
+assert(Downloads.summary(retained):find("已删除 2 章",1,true))
+assert(Downloads.summary(retained):find("保留",1,true))
 assert(Downloads.clean(index,m,"never",true,paths[1]).count==1)
 assert(Downloads.clean(index,m,"never",true).count==1)
 for _,path in ipairs(paths) do assert(not require("libs/libkoreader-lfs").attributes(path)) end

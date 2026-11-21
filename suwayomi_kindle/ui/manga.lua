@@ -175,20 +175,10 @@ function Manga:clean_chapters(manual, notify)
     local result,err=Downloads.clean(self:local_index(),self.detail.id,self.settings.download.retention,manual,path)
     if not result then self.catalog_message="删除失败：" .. (err or "未知错误")
     elseif manual or notify or result.failed>0 then
-        if result.count>0 then
-            self.catalog_message=string.format("已删除 %d 章，失败 %d 章",result.count,result.failed)
-        elseif result.kept>0 and result.failed==0 then
-            self.catalog_message="当前阅读的章节已保留，没有其他可删除章节。"
-        elseif result.failed>0 then
-            self.catalog_message=string.format("没有删除文件，失败 %d 项。可能文件已被修改或路径不属于本账号。",result.failed)
-        elseif result.retention=="never" then
-            self.catalog_message="当前删除策略为“不删除”。"
-        else
-            self.catalog_message="没有可删除的已读下载。"
-        end
+        self.catalog_message=Downloads.summary(result)
     end
     if notify or (result and result.failed>0) then
-        UI:show(require("ui/widget/infomessage"):new{text=self.catalog_message,timeout=4})
+        UI:show(require("ui/widget/infomessage"):new{text=self.catalog_message,timeout=6})
     end
     return result
 end

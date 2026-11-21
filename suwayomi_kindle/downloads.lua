@@ -88,7 +88,7 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
     local policy,err = Downloads.policy(index,manga)
     if not policy then return nil,err end
     local keep = manual and 0 or tonumber(policy.retention == "inherit" and global or policy.retention)
-    if not keep then return {count=0,failed=0,kept=0,missing=0,retention="never"} end
+    if not keep then return {count=0,failed=0,kept=0,missing=0,scanned=0,retention="never"} end
     local scope = assert(index.path:match("/(%x+)%.sqlite3$"))
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
@@ -124,8 +124,19 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
         db:prepare("DELETE FROM file_stamp WHERE manga=? AND id NOT IN (SELECT id FROM files WHERE manga=?)")
             :bind(manga,manga):step()
         db:exec("COMMIT")
-        return {count=count,failed=failed,kept=kept,missing=missing,retention=policy.retention}
+        return {count=count,failed=failed,kept=kept,missing=missing,scanned=#rows,retention=policy.retention}
     end)
+end
+
+function Downloads.summary(result)
+    if not result then return "删除失败。" end
+    if result.scanned==0 then return "没有可删除的已读下载。" end
+    if result.retention=="never" then return "当前删除策略为“不删除”。" end
+    local parts={string.format("已删除 %d 章",result.count)}
+    if result.failed>0 then parts[#parts+1]=string.format("失败 %d 章",result.failed) end
+    if result.kept>0 then parts[#parts+1]=string.format("保留 %d 章（含当前阅读）",result.kept) end
+    if result.missing>0 then parts[#parts+1]=string.format("清理失效记录 %d 条",result.missing) end
+    return table.concat(parts,"；")
 end
 
 return Downloads
