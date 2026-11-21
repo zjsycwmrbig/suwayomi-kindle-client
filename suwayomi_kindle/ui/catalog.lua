@@ -196,6 +196,11 @@ end
 
 function Catalog:global_search_entry(query)
     self:cancel_catalog()
+    if self.detail then
+        self.selected_tab = "browse"
+        self.detail, self.directory, self.reader_origin = nil, nil, nil
+        self.detail_stack, self.recommendation_view = nil, nil
+    end
     self.browse.auto_open = false
     self.catalog_message = nil
     self.browse.global = {draft=true, query=query or self.browse.global_query}
@@ -303,7 +308,9 @@ function Catalog:catalog_actions()
     if self.selected_tab == "settings" or self.settings.connection.server_url == "" then return end
     if self.selected_tab == "tasks" then return self:task_actions() end
     local exploring = self.selected_tab == "browse" and not self.detail and not self.directory
-    local global_entry = {icon="search", "全源搜索", function() self:global_search_entry() end}
+    local global_entry = {icon="search", "全源搜索", function()
+        self:global_search_entry(self.detail and self.detail.title)
+    end}
     if exploring and self.browse.global then
         local state = self.browse.global
         local actions={}
@@ -331,6 +338,7 @@ function Catalog:catalog_actions()
             self:refresh()
         end}
         if self.pending=="library" then return shelf_actions(self,cancel) end
+        if self.detail and not self.directory then return {global_entry,cancel} end
         if exploring then return {global_entry,cancel,pin} end
         return {cancel,pin}
     end
@@ -345,7 +353,7 @@ function Catalog:catalog_actions()
         self:add_download_actions(actions)
         return actions
     elseif self.detail then
-        local actions={{icon="refresh","刷新详情",function() self:refresh_detail() end}}
+        local actions={{icon="refresh","刷新详情",function() self:refresh_detail() end},global_entry}
         if self.settings.recommendation.enabled then
             actions[#actions+1]={icon="search","查找相似漫画",function()
                 local view=self:recommendation_state()

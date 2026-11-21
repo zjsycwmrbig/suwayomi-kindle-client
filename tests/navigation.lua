@@ -287,7 +287,12 @@ assert(home.browse.global.done and #home.browse.global.results==4)
 home:onCloseDialog()
 assert(not home.browse.global and find(home,"label","源 B"))
 home.settings.browse.language="en"
-home:global_search_entry("test")
+home:set_tab("library")
+home.detail={id="901",title="测试跨源漫画"}
+home:refresh()
+find(open(),"label","全源搜索").callback()
+assert(home.selected_tab=="browse" and not home.detail and not home.directory)
+assert(last_request.input.search=="测试跨源漫画")
 assert(#home.browse.global.sources==1 and last_request.input.source.id=="c")
 finish_request(nil,"测试源超时")
 run_deferred()
