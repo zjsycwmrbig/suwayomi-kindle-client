@@ -56,14 +56,15 @@ function Chapters.refresh(index, client, id, force, pull_cutoff)
 end
 
 local columns = [[SELECT c.id,c.pos,c.name,c.scanlator,c.is_read,f.path,
-    CASE WHEN q.state='queued' AND (SELECT paused FROM queue_control)=1 THEN 'paused' ELSE q.state END,q.error FROM chapter c
+    CASE WHEN q.state='queued' AND (SELECT paused FROM queue_control)=1 THEN 'paused' ELSE q.state END,q.error,p.count FROM chapter c
     LEFT JOIN queue q ON c.manga=q.manga AND c.id=q.id
+    LEFT JOIN missing_pages p ON c.manga=p.manga AND c.id=p.id
     LEFT JOIN files f ON c.manga=f.manga AND c.id=f.id WHERE c.manga=? ]]
 
 local function chapter(row)
     local path = row[6]
     return {id = tonumber(row[1]), pos = tonumber(row[2]), name = row[3], scanlator = row[4],
-        state = row[7], error = row[8], read = tonumber(row[5]) == 1, path = path and lfs.attributes(path,"mode") == "file" and path or nil}
+        state = row[7], error = row[8], missing_pages=tonumber(row[9]), read = tonumber(row[5]) == 1, path = path and lfs.attributes(path,"mode") == "file" and path or nil}
 end
 
 function Chapters.page(index, id, page, limit, unread_only)
@@ -139,6 +140,15 @@ local function image_type(bytes)
     if bytes:sub(5,12) == "ftypavif" then return "avif" end
 end
 
+local module_dir = debug.getinfo(1,"S").source:sub(2):match("^(.*)/suwayomi_kindle/chapters%.lua$") or "."
+local function placeholder()
+    local file = assert(io.open(module_dir.."/resources/missing-page.png", "rb"))
+    local bytes = file:read("*a")
+    file:close()
+    assert(image_type(bytes)=="png")
+    return bytes
+end
+
 function Chapters.downloadPath(index,input)
     local scope = assert(index.path:match("/(%x+)%.sqlite3$"))
     return input.directory .. "/Suwayomi/" .. scope .. "/" .. tostring(assert(tonumber(input.manga)))
@@ -168,7 +178,8 @@ function Chapters.download(index, client, input)
     local writer = require("ffi/archiver").Writer:new()
     if not writer:open(tmp, "zip") then return nil, "无法创建章节文件，请检查下载目录。" end
     writer:setZipCompression("store")
-    local page_number,page_error,page_failure = 0,nil,nil
+    local missing, done = {}, 0
+    local page_error
     -- Publish only completed CBZ entries. A superseded worker cannot update its replacement.
     local last_report
     local function report(done, force)
@@ -184,19 +195,44 @@ function Chapters.download(index, client, input)
         end)
     end
     report(0,true)
+    -- CBZ pages sort by filename; a recovered page keeps its original position.
+    local function fetch(i)
+        local bytes, reason = client:pageImage(pages[i])
+        local ext = image_type(bytes)
+        if not ext then
+            missing[#missing+1] = i
+            page_error = reason or "图片获取失败或格式无效。"
+            return
+        end
+        assert(writer:addFileFromMemory(string.format("%05d.%s",i,ext),bytes))
+        done = done+1
+        report(done,done==1 or done==#pages)
+    end
     local ok = pcall(function()
-        for i, url in ipairs(pages) do
-            page_number = i
-            local bytes
-            bytes,page_error = client:pageImage(url)
-            page_failure = "source"
-            local ext = assert(image_type(bytes))
-            page_failure = nil
-            assert(writer:addFileFromMemory(string.format("%05d.%s",i,ext),bytes))
-            report(i,i==1 or i==#pages)
+        for i=1,#pages do fetch(i) end
+        local retries = math.min(require("suwayomi_kindle/settings_store").max_retries, input.page_retries or 2)
+        for attempt=1,retries do
+            if #missing==0 then break end
+            local retry = missing
+            missing = {}
+            for _,i in ipairs(retry) do fetch(i) end
+        end
+        if #missing>0 and done>0 and input.allow_missing_pages then
+            local image = placeholder()
+            for _,i in ipairs(missing) do
+                assert(writer:addFileFromMemory(string.format("%05d.png",i),image))
+            end
         end
     end)
     writer:close()
+    if not ok then
+        os.remove(tmp)
+        return nil,"章节图片处理或写入失败，请检查剩余空间。"
+    end
+    if #missing>0 and (done==0 or not input.allow_missing_pages) then
+        os.remove(tmp)
+        return nil,string.format("缺 %d 页（第 %d 页等）· %s",#missing,missing[1],page_error),"missing_pages"
+    end
     -- Reopen the completed archive before publishing it, including its last page.
     local reader = require("ffi/archiver").Reader:new()
     local count = 0
@@ -207,7 +243,7 @@ function Chapters.download(index, client, input)
     end
     if not ok or count ~= #pages then
         os.remove(tmp)
-        return nil, ok and "章节文件校验或保存失败，请检查剩余空间。" or ("第 " .. page_number .. " 页 · " .. (page_error or "图片获取或写入失败，请重试。")), page_failure
+        return nil,"章节文件校验或保存失败，请检查剩余空间。"
     end
     local saved,save_error=index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
@@ -224,6 +260,11 @@ function Chapters.download(index, client, input)
         db:prepare("INSERT OR REPLACE INTO file_stamp VALUES(?,?,?,?,?)")
             :bind(manga,id,stat.size,stat.modification,tostring(stat.ino)):step()
         db:prepare("INSERT OR REPLACE INTO files VALUES(?,?,?)"):bind(manga,id,path):step()
+        if #missing>0 then
+            db:prepare("INSERT OR REPLACE INTO missing_pages VALUES(?,?,?)"):bind(manga,id,#missing):step()
+        else
+            db:prepare("DELETE FROM missing_pages WHERE manga=? AND id=?"):bind(manga,id):step()
+        end
         if input.match then
             local match=input.match
             db:prepare("INSERT OR REPLACE INTO repair_match VALUES(?,?,?,?,?,?,?)")
@@ -231,7 +272,7 @@ function Chapters.download(index, client, input)
         end
         db:prepare("DELETE FROM queue WHERE manga=? AND id=?"):bind(manga,id):step()
         db:exec("COMMIT")
-        return {path = path}
+        return {path = path, missing_pages = #missing}
     end)
     if not saved then os.remove(tmp) end
     return saved,save_error

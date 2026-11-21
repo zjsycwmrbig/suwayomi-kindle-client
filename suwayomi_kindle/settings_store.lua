@@ -16,7 +16,7 @@ local defaults = {
     theme = {mode = "day"},
     general = {confirm_exit = true},
     download = {directory = "", max_parallel = 1, retention = "1", retries = 2, repair_sources = 3,
-        repair_auto = false, repair_batch = false},
+        repair_auto = false, repair_batch = false, allow_missing_pages = false},
     library = {view_mode = "list", sort = "title"},
     browse = {view_mode = "list", language = "zh", sort = "opened"},
     recommendation = {enabled = true, auto_search = false, limit = 24, sources = 3,

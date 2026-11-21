@@ -107,5 +107,37 @@ mark(8,"single",true)
 assert(index:with_db(function(db)
     return not db:prepare("SELECT 1 FROM queue WHERE manga=? AND id=8"):bind(m):step()
 end))
+local imagefile=assert(io.open(root.."/resources/missing-page.png","rb"))
+local png=imagefile:read("*a")
+imagefile:close()
+local tries, sequence = {}, {}
+function api:request() return {fetchChapterPages={chapter={id=8,manga={id=7}},pages={1,2,3,4}}} end
+function api:pageImage(n)
+    tries[n]=(tries[n] or 0)+1
+    sequence[#sequence+1]=n
+    if n==3 or n==1 and tries[n]==1 then return nil,"获取失败" end
+    return png
+end
+local input={manga=m,id=8,directory=temp,page_retries=2}
+local data,why,category=Chapters.download(index,api,input)
+assert(not data and category=="missing_pages" and why:find("第 3 页",1,true))
+assert(table.concat(sequence,",")=="1,2,3,4,1,3,3")
+assert(not Chapters.locate(index,m,8).path)
+input.allow_missing_pages=true
+data=assert(Chapters.download(index,api,input))
+assert(data.missing_pages==1)
+local reader=require("ffi/archiver").Reader:new()
+assert(reader:open(data.path))
+local names={}
+for e in reader:iterate() do names[#names+1]=e.path end
+reader:close()
+table.sort(names)
+assert(table.concat(names,",")=="00001.png,00002.png,00003.png,00004.png")
+assert(Chapters.refresh(index,api,m) and Chapters.locate(index,m,8).missing_pages==1)
+function api:pageImage() return nil,"获取失败" end
+assert(not Chapters.download(index,api,input))
+assert(Chapters.locate(index,m,8).missing_pages==1)
+function api:pageImage() return png end
+assert(Chapters.download(index,api,input).missing_pages==0 and not Chapters.locate(index,m,8).missing_pages)
 require("ffi/util").purgeDir(temp)
 print("Offline records, sync conflicts, partial failure, queue windows and local cleanup passed")

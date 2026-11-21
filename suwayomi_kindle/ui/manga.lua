@@ -258,7 +258,9 @@ function Manga:build_directory(column,width,height)
     end
     for _,row in ipairs(data.items) do
         local state = row.read and "已读" or "未读"
-        if row.path then state = state .. " · 已下载" end
+        if row.path then
+            state = state .. (row.missing_pages and (" · 残缺 · 缺 "..row.missing_pages.." 页") or " · 已下载")
+        end
         if row.scanlator ~= "" then state = state .. " · " .. row.scanlator end
         if row.id == dir.target then state = "▶  " .. state end
         local busy=row.state=="queued" or row.state=="active"

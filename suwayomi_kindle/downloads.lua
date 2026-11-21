@@ -74,7 +74,7 @@ function Downloads.claim(index,directory)
 end
 
 -- A ticket identifies one attempt, including the confirmation shown to the user.
-function Downloads.sourceFailure(index,job,settings,reason)
+function Downloads.sourceFailure(index,job,settings,reason,pages_exhausted)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
         local row=db:prepare([[SELECT q.retries,q.priority,m.title,c.name FROM queue q
@@ -84,13 +84,13 @@ function Downloads.sourceFailure(index,job,settings,reason)
         local state={action="failed"}
         if row then
             local retries,priority=tonumber(row[1]),tonumber(row[2])
-            if retries<math.min(require("suwayomi_kindle/settings_store").max_retries,settings.retries or 2) then
+            if not pages_exhausted and retries<math.min(require("suwayomi_kindle/settings_store").max_retries,settings.retries or 2) then
                 db:prepare([[UPDATE queue SET state='queued', retries=retries+1,retry_at=?,error=? WHERE ticket=?]])
                     :bind(os.time()+math.min(60,2^retries),reason,job.ticket):step()
                 state.action="retry"
             elseif priority==0 then
                 db:prepare("UPDATE queue SET state='failed',repair='ask',error=? WHERE ticket=?"):bind(reason,job.ticket):step()
-                state={action="ask",title=row[3],name=row[4],attempts=retries+1}
+                state={action="ask",title=row[3],name=row[4],attempts=not pages_exhausted and retries+1 or nil}
             elseif (priority==1 and settings.repair_batch) or (priority==2 and settings.repair_auto) then
                 db:prepare("UPDATE queue SET state='queued',repair='ready',retry_at=0,error=? WHERE ticket=?"):bind(reason,job.ticket):step()
                 state.action="repair"

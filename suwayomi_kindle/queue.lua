@@ -62,6 +62,8 @@ function Queue.start(q,resume)
         while not q.waiting and q.active < math.min(5, tonumber(q.settings.max_parallel) or 1) do
             local job = Downloads.claim(q.index,Tasks.directory(q.settings.directory))
             if not job then break end
+            job.allow_missing_pages = q.settings.allow_missing_pages == true
+            job.page_retries = q.settings.retries
             q.active=q.active+1
             started=true
             q.jobs[job.ticket]=job
@@ -71,10 +73,11 @@ function Queue.start(q,resume)
                 q.jobs[job.ticket]=nil
                 q.active=q.active-1
                 local source_error=data and data.source_error
+                local exhausted=data and data.pages_exhausted
                 if source_error then data,err=nil,source_error end
                 local offline=not job.repair and err and (err:find("无法连接服务器",1,true)
                     or err:find("连接超时",1,true) or err:find("认证失败",1,true))
-                local decision=source_error and not offline and Downloads.sourceFailure(q.index,job,q.settings,err)
+                local decision=source_error and not offline and Downloads.sourceFailure(q.index,job,q.settings,err,exhausted)
                 if job.repair then
                     Log.add(q.index,job,data and "换源下载成功" or ("换源下载失败 · "..(err or "未知原因")))
                 elseif decision then

@@ -68,13 +68,14 @@ function Worker.run(config, action, input)
             input.match,input.remote_id,input.remote_manga = candidate,candidate.id,candidate.manga
         end
         local data, reason, category = Chapters.download(index,client,input)
-        if not data and category=="source" and input.match and input.match.reused then
+        local source_failure = category=="source" or category=="missing_pages"
+        if not data and source_failure and input.match and input.match.reused then
             local next_match,why=require("suwayomi_kindle/repair").select(index,client,input,input.match)
             if not next_match then return nil,why end
             input.match,input.remote_id,input.remote_manga=next_match,next_match.id,next_match.manga
             return Chapters.download(index,client,input)
         end
-        if not data and category=="source" and not input.repair then return {source_error=reason} end
+        if not data and source_failure and not input.repair then return {source_error=reason,pages_exhausted=category=="missing_pages"} end
         return data, reason
     elseif action == "covers" then
         return require("suwayomi_kindle/covers").fetch(client, input)
