@@ -141,12 +141,17 @@ local function image_type(bytes)
 end
 
 local module_dir = debug.getinfo(1,"S").source:sub(2):match("^(.*)/suwayomi_kindle/chapters%.lua$") or "."
-local function placeholder()
-    local file = assert(io.open(module_dir.."/resources/missing-page.png", "rb"))
-    local bytes = file:read("*a")
-    file:close()
-    assert(image_type(bytes)=="png")
-    return bytes
+local placeholders = {}
+local function placeholder(page)
+    local index = (page - 1) % 3 + 1
+    if not placeholders[index] then
+        local file = assert(io.open(module_dir.."/resources/missing-page-"..index..".png", "rb"))
+        local bytes = file:read("*a")
+        file:close()
+        assert(image_type(bytes)=="png")
+        placeholders[index] = bytes
+    end
+    return placeholders[index]
 end
 
 function Chapters.downloadPath(index,input)
@@ -218,9 +223,8 @@ function Chapters.download(index, client, input)
             for _,i in ipairs(retry) do fetch(i) end
         end
         if #missing>0 and done>0 and input.allow_missing_pages then
-            local image = placeholder()
             for _,i in ipairs(missing) do
-                assert(writer:addFileFromMemory(string.format("%05d.png",i),image))
+                assert(writer:addFileFromMemory(string.format("%05d.png",i),placeholder(i)))
             end
         end
     end)

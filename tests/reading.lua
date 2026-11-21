@@ -107,7 +107,7 @@ mark(8,"single",true)
 assert(index:with_db(function(db)
     return not db:prepare("SELECT 1 FROM queue WHERE manga=? AND id=8"):bind(m):step()
 end))
-local imagefile=assert(io.open(root.."/resources/missing-page.png","rb"))
+local imagefile=assert(io.open(root.."/resources/missing-page-1.png","rb"))
 local png=imagefile:read("*a")
 imagefile:close()
 local tries, sequence = {}, {}
