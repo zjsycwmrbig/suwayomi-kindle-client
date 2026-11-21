@@ -157,6 +157,40 @@ local policies = {{"never","不删除"}, {"0","直接删除"}, {"1","留 1 章"}
     {"5","留 5 章"}, {"10","留 10 章"}}
 
 local function stepper(home, width, title, options, value, change)
+    if type(options[1][1]) == "number" then
+        local first, last = options[1][1], options[#options][1]
+        local w = math.min(scale(82), math.floor(width/4))
+        local function edit()
+            local dialog
+            local function submit()
+                local text = Config.trim(dialog:getInputText())
+                local number = text:match("^%d+$") and tonumber(text)
+                if not number or number < first or number > last then
+                    UI:show(require("ui/widget/infomessage"):new{text="请输入 "..first.." 到 "..last.." 的整数。"})
+                    return
+                end
+                UI:close(dialog)
+                if number ~= value then change(number) end
+            end
+            dialog = require("ui/widget/inputdialog"):new{title=title.."（"..first.."–"..last.."）",
+                input=tostring(value), input_type="number", buttons={{
+                    {text="取消", callback=function() UI:close(dialog) end},
+                    {text="保存", is_enter_default=true, callback=submit},
+                }}}
+            UI:show(dialog)
+            dialog:onShowKeyboard()
+        end
+        local previous, following
+        for _, option in ipairs(options) do
+            if option[1] < value then previous = option[1]
+            elseif option[1] > value then following = option[1]; break end
+        end
+        return setting_line(width, title, Row:new{
+            small(home, "<", scale(32), previous and function() change(previous) end),
+            small(home, tostring(value), w, edit),
+            small(home, ">", scale(32), following and function() change(following) end),
+        })
+    end
     local index = 1
     for i, opt in ipairs(options) do if opt[1] == value then index = i end end
     local w = math.min(scale(82), math.floor(width/4))
