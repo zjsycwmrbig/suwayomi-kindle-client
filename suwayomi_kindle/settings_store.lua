@@ -7,6 +7,8 @@ local Languages = require("suwayomi_kindle/languages")
 
 local Store = {}
 Store.__index = Store
+Store.max_search_sources = 200
+Store.max_retries = 10
 
 local defaults = {
     connection = {server_url = "", auth_method = "none", username = "", password = "",

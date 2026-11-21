@@ -19,6 +19,7 @@ local Line = require("ui/widget/linewidget")
 local UI = require("ui/uimanager")
 
 local Config = require("suwayomi_kindle/config")
+local Store = require("suwayomi_kindle/settings_store")
 local Button = require("suwayomi_kindle/ui/flat_button")
 local SettingRow = require("suwayomi_kindle/ui/setting_row")
 local SourceControl = require("suwayomi_kindle/ui/source_control")
@@ -252,8 +253,8 @@ function methods:build_repair_settings(screen_width,height)
             callback=function() save_section(self,"download",{[key]=not cfg[key]}) end}
         column[#column+1]=rule(width)
     end
-    count("原源最大重试次数","retries",0,5)
-    count("最多搜索备用源","repair_sources",1,10)
+    count("原源最大重试次数","retries",0,Store.max_retries)
+    count("最多搜索备用源","repair_sources",1,Store.max_search_sources)
     toggle("自动下载失败时换源","repair_auto")
     toggle("批量下载失败时换源","repair_batch")
     column[#column+1]=SettingRow:new{label="换源日志",value="最近 100 条",width=width,
@@ -336,7 +337,7 @@ function methods:build_recommendation_settings(screen_width, body_height)
         stepper(self, width, "推荐前几部", {{5,"5"},{10,"10"},{15,"15"},{20,"20"},{24,"24"},{25,"25"},{36,"36"},{50,"50"}}, config.limit,
             function(value) save_section(self, "recommendation", {limit = value}) end),
         rule(width),
-        stepper(self, width, "优先搜索源数", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"}}, config.sources,
+        stepper(self, width, "优先搜索源数", {{1,"1"},{2,"2"},{3,"3"},{4,"4"},{5,"5"},{10,"10"},{20,"20"},{50,"50"},{100,"100"},{Store.max_search_sources,tostring(Store.max_search_sources)}}, config.sources,
             function(value) save_section(self, "recommendation", {sources = value}) end),
         rule(width), label("搜索书名语言优先级")}
     local order = Languages.titleOrder(config.search_languages)

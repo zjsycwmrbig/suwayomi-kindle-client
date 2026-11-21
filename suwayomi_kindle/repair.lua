@@ -111,7 +111,7 @@ function Repair.select(index,client,job,exclude)
     local history,history_error=index:sourceHistory()
     if not history then return nil,history_error end
     local ordered=Sources.list(all.sources,browse.language,nil,browse.sort,pins,history.opened)
-    local limit=math.min(10,math.max(1,store:load("download").repair_sources))
+    local limit=math.min(store.max_search_sources,math.max(1,store:load("download").repair_sources))
     local saved=index:with_db(function(db)
         return db:prepare([[SELECT remote_manga,remote_id,remote_name,remote_title FROM repair_match
             WHERE manga=? AND id=? AND original_name=?]]):bind(job.manga,job.id,target.name):step()

@@ -84,9 +84,9 @@ function Downloads.sourceFailure(index,job,settings,reason)
         local state={action="failed"}
         if row then
             local retries,priority=tonumber(row[1]),tonumber(row[2])
-            if retries<math.min(5,settings.retries or 2) then
+            if retries<math.min(require("suwayomi_kindle/settings_store").max_retries,settings.retries or 2) then
                 db:prepare([[UPDATE queue SET state='queued', retries=retries+1,retry_at=?,error=? WHERE ticket=?]])
-                    :bind(os.time()+2^retries,reason,job.ticket):step()
+                    :bind(os.time()+math.min(60,2^retries),reason,job.ticket):step()
                 state.action="retry"
             elseif priority==0 then
                 db:prepare("UPDATE queue SET state='failed',repair='ask',error=? WHERE ticket=?"):bind(reason,job.ticket):step()
