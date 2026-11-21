@@ -142,8 +142,7 @@ end
 
 local module_dir = debug.getinfo(1,"S").source:sub(2):match("^(.*)/suwayomi_kindle/chapters%.lua$") or "."
 local placeholders = {}
-local function placeholder(page)
-    local index = (page - 1) % 3 + 1
+local function placeholder(index)
     if not placeholders[index] then
         local file = assert(io.open(module_dir.."/resources/missing-page-"..index..".png", "rb"))
         local bytes = file:read("*a")
@@ -184,6 +183,11 @@ function Chapters.download(index, client, input)
     if not writer:open(tmp, "zip") then return nil, "无法创建章节文件，请检查下载目录。" end
     writer:setZipCompression("store")
     local missing, done = {}, 0
+    local placeholder_state = (os.time() + require("ffi").C.getpid() + id * 97) % 2147483647 + 1
+    local function next_placeholder()
+        placeholder_state = placeholder_state * 48271 % 2147483647
+        return placeholder(placeholder_state % 3 + 1)
+    end
     local page_error
     -- Publish only completed CBZ entries. A superseded worker cannot update its replacement.
     local last_report
@@ -224,7 +228,7 @@ function Chapters.download(index, client, input)
         end
         if #missing>0 and done>0 and input.allow_missing_pages then
             for _,i in ipairs(missing) do
-                assert(writer:addFileFromMemory(string.format("%05d.png",i),placeholder(i)))
+                assert(writer:addFileFromMemory(string.format("%05d.png",i),next_placeholder()))
             end
         end
     end)
