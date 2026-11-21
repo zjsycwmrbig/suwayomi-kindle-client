@@ -75,8 +75,11 @@ for id=1,4 do
     local p=Chapters.downloadPath(index,{manga=m,id=id,directory=temp})
     require("util").makePath(p:match("^(.*)/"))
     local f=assert(io.open(p,"wb")); assert(f:write("fixture")); f:close()
+    local stat=assert(require("libs/libkoreader-lfs").attributes(p))
     assert(index:with_db(function(db)
         db:prepare("INSERT INTO files VALUES(?,?,?)"):bind(m,id,p):step()
+        db:prepare("INSERT INTO file_stamp VALUES(?,?,?,?,?)")
+            :bind(m,id,stat.size,stat.modification,"stale-fuse-inode-"..id):step()
         return true
     end))
     paths[id]=p

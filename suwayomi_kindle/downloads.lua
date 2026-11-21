@@ -93,11 +93,11 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
         local rows = {}
-        for r in db:prepare([[SELECT f.id,f.path,s.bytes,s.mtime,s.inode FROM files f
+        for r in db:prepare([[SELECT f.id,f.path,s.bytes,s.mtime FROM files f
             LEFT JOIN file_stamp s ON s.manga=f.manga AND s.id=f.id JOIN chapter c ON c.id=f.id AND c.manga=f.manga
             LEFT JOIN finished t ON t.id=f.id AND t.manga=f.manga WHERE f.manga=? AND c.is_read=1
             ORDER BY COALESCE(t.at,0) DESC,c.pos DESC]]):bind(manga):rows() do
-            rows[#rows+1]={id=tonumber(r[1]),path=r[2],bytes=tonumber(r[3]),mtime=tonumber(r[4]),inode=r[5]}
+            rows[#rows+1]={id=tonumber(r[1]),path=r[2],bytes=tonumber(r[3]),mtime=tonumber(r[4])}
         end
         local count,failed,kept,missing=0,0,0,0
         local forget=db:prepare("DELETE FROM files WHERE manga=? AND id=? AND path=?")
@@ -106,7 +106,9 @@ function Downloads.clean(index,manga,global,manual,open_path,destination)
             local suffix="/Suwayomi/" .. scope .. "/" .. manga .. "/" .. r.id .. ".cbz"
             local stat,_,errno=lfs.symlinkattributes(r.path)
             local mode=stat and stat.mode
-            local replaced=stat and r.bytes and (r.bytes~=stat.size or r.mtime~=stat.modification or r.inode~=tostring(stat.ino))
+            -- Kindle's FUSE mount may reassign inode numbers after a reboot.
+            -- Size and mtime remain stable for untouched managed archives.
+            local replaced=stat and r.bytes and (r.bytes~=stat.size or r.mtime~=stat.modification)
             if not mode and errno==2 then
                 forget:reset():bind(manga,r.id,r.path):step()
                 missing=missing+1

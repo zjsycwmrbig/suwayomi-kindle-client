@@ -187,11 +187,10 @@ local function delete_files(db,index,selections,root,open_path)
             end
             local stamp
             if stat and item.manga and item.id then
-                stamp=db:prepare("SELECT bytes,mtime,inode FROM file_stamp WHERE manga=? AND id=?")
+                stamp=db:prepare("SELECT bytes,mtime FROM file_stamp WHERE manga=? AND id=?")
                     :bind(item.manga,item.id):step()
             end
-            local replaced=stamp and (tonumber(stamp[1])~=stat.size or tonumber(stamp[2])~=stat.modification
-                or stamp[3]~=tostring(stat.ino))
+            local replaced=stamp and (tonumber(stamp[1])~=stat.size or tonumber(stamp[2])~=stat.modification)
             local absent=acceptable and not stat and errno==2
             if path and path==open_path then
                 kept=kept+1

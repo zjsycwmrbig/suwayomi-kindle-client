@@ -88,6 +88,21 @@ assert(selected)
 local deleted=assert(Tasks.deleteFiles(ix,{[selected.key]=selected},root))
 assert(deleted.count==1 and lfs.attributes(path("7",50),"mode")==nil)
 assert(Tasks.page(ix,"files",1,10).count==2)
+local fuse_path=path("7",17)
+track("7",17,fuse_path)
+local fuse_stat=assert(lfs.attributes(fuse_path))
+assert(ix:with_db(function(db)
+    db:prepare("INSERT OR REPLACE INTO file_stamp VALUES(?,?,?,?,?)")
+        :bind("7",17,fuse_stat.size,fuse_stat.modification,"old-boot-inode"):step()
+    return true
+end))
+local fuse_item
+for _,item in ipairs(Tasks.page(ix,"files",1,10,{manga="7"}).rows) do
+    if item.manga=="7" and item.id==17 then fuse_item=item end
+end
+assert(fuse_item)
+local fuse_deleted=assert(Tasks.deleteFiles(ix,{[fuse_item.key]=fuse_item},root))
+assert(fuse_deleted.count==1 and fuse_deleted.failed==0 and lfs.attributes(fuse_path,"mode")==nil)
 local guarded
 for _,item in ipairs(Tasks.page(ix,"files",1,10,{manga="7"}).rows) do
     if item.manga=="7" and item.id==99 then guarded=item end
