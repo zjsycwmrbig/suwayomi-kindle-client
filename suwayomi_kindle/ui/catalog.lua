@@ -202,6 +202,11 @@ function Catalog:global_search_entry(query)
     if query and query ~= "" then self:start_global_search(query) else self:refresh() end
 end
 
+local function explore_sources(home)
+    return BrowseSources.list(home.all_sources, home.settings.browse.language, nil,
+        home.settings.browse.sort, home:source_pins(), home:source_history_data().opened)
+end
+
 function Catalog:start_global_search(query)
     query = require("suwayomi_kindle/config").trim(query or "")
     if query == "" then
@@ -216,9 +221,7 @@ function Catalog:start_global_search(query)
     self:cancel_catalog()
     self.detail,self.directory,self.reader_origin = nil,nil,nil
     self.detail_stack,self.recommendation_view = nil,nil
-    local history=self:source_history_data()
-    local sources=BrowseSources.list(self.all_sources,"all",nil,
-        self.settings.browse.sort,self:source_pins(),history.opened)
+    local sources = explore_sources(self)
     self.browse.global={query=query,sources=sources,index=1,results={},failed=0,
         seen={},more={},remote_page=1,page=1}
     self:next_global_search()
@@ -588,9 +591,8 @@ local function sources(home, column, width, size)
         defer(home, function() home:fetch_sources() end)
     end
     if not home.all_sources then return end
-    local pinned, history = home:source_pins(), home:source_history_data()
-    local all = BrowseSources.list(home.all_sources, home.settings.browse.language, nil,
-        home.settings.browse.sort, pinned, history.opened)
+    local pinned = home:source_pins()
+    local all = explore_sources(home)
     local items, positions, pin_count, priority = {}, {}, 0, 0
     for _, source in ipairs(all) do
         if pinned[source.id] then
@@ -677,8 +679,9 @@ local function global_search_view(home, column, width, height, grid)
     local state = home.browse.global
     if state.draft then
         search_bar(home, column, width, false, function(query) home:start_global_search(query) end,
-            state, {button="搜索",hint="输入漫画名，搜索所有已安装的源"})
-        note(column, width, home.pending and "正在获取漫画源…" or home.catalog_message)
+            state, {button="搜索",hint="输入漫画名"})
+        local scope = home.all_sources and string.format("搜索探索列表中的 %d 个源，置顶源优先。", #explore_sources(home))
+        note(column, width, home.pending and "正在获取漫画源…" or home.catalog_message or scope)
         return
     end
     local total = #state.sources
@@ -707,7 +710,8 @@ local function global_search_view(home, column, width, height, grid)
     if grid then size,poster_height=grid_layout(width,available,68)
     else size,poster_height=math.max(1,math.floor(available/scale(72))),nil end
     if #state.results == 0 then
-        local message = state.done and (state.last_error or "没有找到匹配漫画。")
+        local message = total == 0 and "当前探索语言下没有可搜索的源。"
+            or state.done and (state.last_error or "没有找到匹配漫画。")
             or state.paused and "搜索已暂停。"
             or "正在等待搜索结果…"
         note(column,width,message)
