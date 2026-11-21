@@ -23,24 +23,24 @@ end
 
 -- An automatic window counts already cached chapters toward its size.
 function Downloads.enqueue(index,manga,mode,id)
-    local priority = assert(({single=0,all=1,auto=2})[mode])
+    local priority = assert(({single=0,all=1,auto=2,next_auto=2})[mode])
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
         local sql = [[SELECT c.id,f.path FROM chapter c LEFT JOIN files f ON c.manga=f.manga AND c.id=f.id WHERE c.manga=?]]
         local select
         if mode == "auto" then
-            db:prepare("DELETE FROM queue WHERE manga=? AND priority=2 AND state='queued'"):bind(manga):step()
+            db:prepare("DELETE FROM queue WHERE manga=? AND priority=2 AND state='queued' AND retries=0 AND repair=''"):bind(manga):step()
             select = db:prepare(sql .. [[ AND is_read=0 AND NOT EXISTS
                 (SELECT 1 FROM auto_download_excluded e WHERE e.manga=c.manga AND e.id=c.id)
                 ORDER BY pos LIMIT COALESCE((SELECT ahead FROM policy WHERE manga=?),0)]]):bind(manga,manga)
-        elseif mode == "single" then
+        elseif mode == "single" or mode == "next_auto" then
             select = db:prepare(sql .. " AND c.id=?"):bind(manga,id)
         else select = db:prepare(sql .. " ORDER BY pos"):bind(manga) end
         local insert = db:prepare([[INSERT INTO queue(manga,id,priority,state,error) VALUES(?,?,?,'queued',NULL) ON CONFLICT(manga,id)
             DO UPDATE SET priority=min(queue.priority,excluded.priority),
             state=CASE WHEN queue.state='failed' AND excluded.priority<2 THEN 'queued' ELSE queue.state END]])
         local count=0
-        local include = mode ~= "auto" and db:prepare("DELETE FROM auto_download_excluded WHERE manga=? AND id=?")
+        local include = priority < 2 and db:prepare("DELETE FROM auto_download_excluded WHERE manga=? AND id=?")
         for row in select:rows() do
             if include then include:reset():bind(manga,tonumber(row[1])):step() end
             if not row[2] or lfs.attributes(row[2],"mode") ~= "file" then
@@ -56,18 +56,65 @@ end
 function Downloads.claim(index,directory)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
-        local row = db:prepare([[SELECT q.manga,q.id FROM queue q JOIN chapter c ON c.manga=q.manga AND c.id=q.id
-            WHERE q.state='queued' AND (SELECT paused FROM queue_control)=0 ORDER BY q.priority,q.rowid LIMIT 1]]):step()
+        local row = db:prepare([[SELECT q.manga,q.id,q.repair FROM queue q JOIN chapter c ON c.manga=q.manga AND c.id=q.id
+            WHERE q.state='queued' AND q.retry_at<=strftime('%s','now') AND
+                (q.repair<>'ready' OR NOT EXISTS(SELECT 1 FROM queue WHERE state='active' AND repair='ready'))
+                AND (SELECT paused FROM queue_control)=0 ORDER BY q.priority,q.rowid LIMIT 1]]):step()
         local job
         if row then
             db:exec("UPDATE queue_control SET serial=serial+1")
-            job = {manga=row[1],id=tonumber(row[2]),ticket=tonumber(db:rowexec("SELECT serial FROM queue_control")),directory=directory}
+            job = {repair=row[3]=="ready",manga=row[1],id=tonumber(row[2]),ticket=tonumber(db:rowexec("SELECT serial FROM queue_control")),directory=directory}
             local path = directory and require("suwayomi_kindle/chapters").downloadPath(index,job) or nil
-            db:prepare([[UPDATE queue SET state='active',error=NULL,pages_done=NULL,pages_total=NULL,
+            db:prepare([[UPDATE queue SET state='active',retry_at=0,error=NULL,pages_done=NULL,pages_total=NULL,
                 ticket=?,target_path=coalesce(?,target_path) WHERE manga=? AND id=?]]):bind(job.ticket,path,job.manga,job.id):step()
         end
         db:exec("COMMIT")
         return job or false
+    end)
+end
+
+-- A ticket identifies one attempt, including the confirmation shown to the user.
+function Downloads.sourceFailure(index,job,settings,reason)
+    return index:with_db(function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local row=db:prepare([[SELECT q.retries,q.priority,m.title,c.name FROM queue q
+            JOIN manga m ON m.id=q.manga JOIN chapter c ON c.manga=q.manga AND c.id=q.id
+            WHERE q.manga=? AND q.id=? AND q.ticket=? AND q.state='active']])
+            :bind(job.manga,job.id,job.ticket):step()
+        local state={action="failed"}
+        if row then
+            local retries,priority=tonumber(row[1]),tonumber(row[2])
+            if retries<math.min(5,settings.retries or 2) then
+                db:prepare([[UPDATE queue SET state='queued', retries=retries+1,retry_at=?,error=? WHERE ticket=?]])
+                    :bind(os.time()+2^retries,reason,job.ticket):step()
+                state.action="retry"
+            elseif priority==0 then
+                db:prepare("UPDATE queue SET state='failed',repair='ask',error=? WHERE ticket=?"):bind(reason,job.ticket):step()
+                state={action="ask",title=row[3],name=row[4],attempts=retries+1}
+            elseif (priority==1 and settings.repair_batch) or (priority==2 and settings.repair_auto) then
+                db:prepare("UPDATE queue SET state='queued',repair='ready',retry_at=0,error=? WHERE ticket=?"):bind(reason,job.ticket):step()
+                state.action="repair"
+            end
+        end
+        db:exec("COMMIT")
+        return state
+    end)
+end
+
+function Downloads.confirmRepair(index,job,accept)
+    return index:with_db(function(db)
+        local state,phase=accept and "queued" or "failed",accept and "ready" or ""
+        db:prepare([[UPDATE queue SET state=?,repair=?,retry_at=0 WHERE manga=? AND id=?
+            AND ticket=? AND state='failed' AND repair='ask' AND manga IN (SELECT id FROM manga)]])
+            :bind(state,phase,job.manga,job.id,job.ticket):step()
+        return tonumber(db:rowexec("SELECT changes()"))==1
+    end)
+end
+
+function Downloads.nextRetry(index)
+    return index:with_db(function(db)
+        return tonumber((db:rowexec([[SELECT min(retry_at) FROM queue WHERE state='queued'
+            AND retry_at>0 AND (SELECT paused FROM queue_control)=0]])))
     end)
 end
 

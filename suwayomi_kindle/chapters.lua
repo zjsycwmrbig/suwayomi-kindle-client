@@ -37,6 +37,7 @@ function Chapters.refresh(index, client, id, force, pull_cutoff)
         db:exec("BEGIN IMMEDIATE")
         db:prepare("DELETE FROM chapter WHERE manga=?"):bind(id):step()
         db:exec("INSERT INTO chapter SELECT * FROM incoming")
+        db:prepare("DELETE FROM repair_match WHERE manga=? AND id NOT IN (SELECT id FROM incoming)"):bind(id):step()
         db:prepare("DELETE FROM queue WHERE manga=? AND id NOT IN (SELECT id FROM chapter WHERE manga=?) AND state<>'active'")
             :bind(id,id):step()
         if pull_cutoff then
@@ -144,20 +145,30 @@ function Chapters.downloadPath(index,input)
         .. "/" .. tostring(assert(tonumber(input.id))) .. ".cbz"
 end
 
+function Chapters.pages(client,manga,id)
+    local data,err=client:request([[mutation($id:Int!){fetchChapterPages(input:{chapterId:$id}){
+        pages chapter{id manga{id}}}}]],{id=id})
+    local result=data and data.fetchChapterPages
+    if not result or not result.chapter or result.chapter.id~=id or not result.chapter.manga
+        or tostring(result.chapter.manga.id)~=manga or type(result.pages)~="table" or #result.pages==0 then
+        return nil,err or "没有可下载的漫画页。"
+    end
+    return result.pages
+end
+
 function Chapters.download(index, client, input)
     local id, manga = assert(tonumber(input.id)), tostring(assert(tonumber(input.manga)))
-    local data, err = client:request([[mutation($id:Int!){fetchChapterPages(input:{chapterId:$id}){
-        pages chapter{id manga{id}}}}]], {id = id})
-    local result = data and data.fetchChapterPages
-    if not result or not result.chapter or result.chapter.id ~= id or tostring(result.chapter.manga.id) ~= manga
-        or type(result.pages) ~= "table" or #result.pages == 0 then return nil, err or "没有可下载的漫画页。" end
+    local pages,err
+    if input.match and input.match.pages then pages=input.match.pages
+    else pages,err=Chapters.pages(client,input.remote_manga or manga,input.remote_id or id) end
+    if not pages then return nil,err,"source" end
     local path = Chapters.downloadPath(index,input)
     require("util").makePath(path:match("^(.*)/"))
     local tmp = path .. "." .. require("ffi").C.getpid() .. ".part"
     local writer = require("ffi/archiver").Writer:new()
     if not writer:open(tmp, "zip") then return nil, "无法创建章节文件，请检查下载目录。" end
     writer:setZipCompression("store")
-    local page_number,page_error = 0,nil
+    local page_number,page_error,page_failure = 0,nil,nil
     -- Publish only completed CBZ entries. A superseded worker cannot update its replacement.
     local last_report
     local function report(done, force)
@@ -168,19 +179,21 @@ function Chapters.download(index, client, input)
         index:with_db(function(db)
             db:prepare([[UPDATE queue SET pages_done=?, pages_total=?
                 WHERE manga=? AND id=? AND state='active' AND ticket=?]])
-                :bind(done,#result.pages,manga,id,input.ticket):step()
+                :bind(done,#pages,manga,id,input.ticket):step()
             return true
         end)
     end
     report(0,true)
     local ok = pcall(function()
-        for i, url in ipairs(result.pages) do
+        for i, url in ipairs(pages) do
             page_number = i
             local bytes
             bytes,page_error = client:pageImage(url)
+            page_failure = "source"
             local ext = assert(image_type(bytes))
+            page_failure = nil
             assert(writer:addFileFromMemory(string.format("%05d.%s",i,ext),bytes))
-            report(i,i==1 or i==#result.pages)
+            report(i,i==1 or i==#pages)
         end
     end)
     writer:close()
@@ -192,9 +205,9 @@ function Chapters.download(index, client, input)
         ok = not reader.err
         reader:close()
     end
-    if not ok or count ~= #result.pages then
+    if not ok or count ~= #pages then
         os.remove(tmp)
-        return nil, ok and "章节文件校验或保存失败，请检查剩余空间。" or ("第 " .. page_number .. " 页 · " .. (page_error or "图片获取或写入失败，请重试。"))
+        return nil, ok and "章节文件校验或保存失败，请检查剩余空间。" or ("第 " .. page_number .. " 页 · " .. (page_error or "图片获取或写入失败，请重试。")), page_failure
     end
     local saved,save_error=index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
@@ -203,11 +216,19 @@ function Chapters.download(index, client, input)
         end
         if input.ticket and not db:prepare("SELECT 1 FROM queue WHERE manga=? AND id=? AND ticket=? AND state='active'")
             :bind(manga,id,input.ticket):step() then error("提示：下载任务已暂停。") end
+        if input.remote_id and not db:prepare("SELECT 1 FROM manga WHERE id=?"):bind(manga):step() then
+            error("提示：漫画已移出书架。")
+        end
         if not os.rename(tmp,path) then error("提示：无法保存 CBZ，请检查下载目录和剩余空间。") end
         local stat=assert(lfs.attributes(path))
         db:prepare("INSERT OR REPLACE INTO file_stamp VALUES(?,?,?,?,?)")
             :bind(manga,id,stat.size,stat.modification,tostring(stat.ino)):step()
         db:prepare("INSERT OR REPLACE INTO files VALUES(?,?,?)"):bind(manga,id,path):step()
+        if input.match then
+            local match=input.match
+            db:prepare("INSERT OR REPLACE INTO repair_match VALUES(?,?,?,?,?,?,?)")
+                :bind(manga,id,match.original_name,match.manga,match.id,match.name,match.title):step()
+        end
         db:prepare("DELETE FROM queue WHERE manga=? AND id=?"):bind(manga,id):step()
         db:exec("COMMIT")
         return {path = path}

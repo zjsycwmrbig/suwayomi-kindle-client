@@ -159,6 +159,7 @@ function Home:page_title()
     if self.selected_tab == "settings" then
         return self.settings_route == "connection" and "连接"
             or self.settings_route == "languages" and "源语言"
+            or self.settings_route == "repair" and "失败重试与换源"
             or self.settings_route == "download" and "下载"
             or self.settings_route == "library" and "书架"
             or self.settings_route == "sync" and "同步"
@@ -209,7 +210,7 @@ function Home:refresh()
     local on_back
     if self.selected_tab == "settings" and self.settings_route ~= "index" then
         on_back = function()
-            self.settings_route = (self.settings_route == "languages" or self.settings_route == "recommendation") and "browse" or "index"
+            self.settings_route = self.settings_route == "repair" and "download" or (self.settings_route == "languages" or self.settings_route == "recommendation") and "browse" or "index"
             self:refresh()
         end
     elseif self.selected_tab=="tasks" and self.task_folder then
@@ -253,6 +254,8 @@ function Home:refresh()
             body = self:build_settings_index(screen.w, body_height)
         elseif self.settings_route == "connection" then
             body = self:build_connection_settings(screen.w, body_height)
+        elseif self.settings_route == "repair" then
+            body = self:build_repair_settings(screen.w, body_height)
         elseif self.settings_route == "download" then
             body = self:build_download_settings(screen.w, body_height)
         elseif self.settings_route == "library" then

@@ -20,7 +20,7 @@ local function with_db(index, action)
     if not opened then return nil, "无法打开本地漫画索引。" end
     local ok, result = pcall(function()
         db:set_busy_timeout(1000)
-        if tonumber(db:rowexec("PRAGMA user_version")) < 13 then
+        if tonumber(db:rowexec("PRAGMA user_version")) < 15 then
             db:exec("PRAGMA journal_mode=WAL; BEGIN IMMEDIATE")
             local version = tonumber(db:rowexec("PRAGMA user_version"))
             if version == 0 then
@@ -102,7 +102,22 @@ local function with_db(index, action)
             if version < 13 then
                 db:exec("ALTER TABLE manga ADD COLUMN anilist_id INTEGER")
             end
-            db:exec("PRAGMA user_version=13; COMMIT")
+            if version < 14 then
+                db:exec([[ALTER TABLE queue ADD COLUMN retries INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE queue ADD COLUMN retry_at INTEGER NOT NULL DEFAULT 0;
+                    ALTER TABLE queue ADD COLUMN repair TEXT NOT NULL DEFAULT '';
+                    CREATE TABLE repair_cache(id TEXT PRIMARY KEY,expires INTEGER NOT NULL,data TEXT NOT NULL)]])
+                db:prepare([[CREATE TRIGGER restart_failed AFTER UPDATE OF state ON queue
+                    WHEN OLD.state='failed' AND NEW.state='queued' AND NEW.repair=OLD.repair
+                    BEGIN UPDATE queue SET repair='',retries=0,retry_at=0 WHERE manga=NEW.manga AND id=NEW.id; END]]):step()
+            end
+            if version < 15 then
+                db:exec([[CREATE TABLE IF NOT EXISTS repair_match(manga TEXT,id INTEGER,original_name TEXT,
+                    remote_manga TEXT,remote_id INTEGER,remote_name TEXT,remote_title TEXT,PRIMARY KEY(manga,id))]])
+                db:prepare([[CREATE TRIGGER IF NOT EXISTS remove_repair_match AFTER DELETE ON manga
+                    BEGIN DELETE FROM repair_match WHERE manga=OLD.id; END]]):step()
+            end
+            db:exec("PRAGMA user_version=15; COMMIT")
         end
         return action(db)
     end)

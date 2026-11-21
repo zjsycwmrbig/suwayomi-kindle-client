@@ -12,7 +12,11 @@ function Queue.attach(index,config,settings,owner)
     if not q then
         q = {active=0,index=index,jobs={},listeners={}}
         sessions[index.path] = q
-        index:with_db(function(db) db:exec("UPDATE queue SET state='queued' WHERE state='active'"); return true end)
+        index:with_db(function(db)
+            db:exec([[UPDATE queue SET state='failed',error='换源中断，可重新下载。' WHERE state='active' AND repair='ready';
+                UPDATE queue SET state='queued' WHERE state='active']])
+            return true
+        end)
     end
     q.config,q.settings = config,settings
     if owner then q.owner=owner end
@@ -28,6 +32,22 @@ local function redraw(q,manga)
     local home=q.owner
     if home and home.alive and home.index and home.index.path==q.index.path and (home.selected_tab=="tasks" or (home.directory
         and (not manga or home.detail.id==manga))) then home:refresh() end
+end
+
+function Queue.askRepair(q,job,details,reason)
+    local function answer(accept)
+        if Downloads.confirmRepair(q.index,job,accept) then
+            if not accept then Queue.notify(q,job,nil,reason) end
+            redraw(q,job.manga)
+            Queue.start(q)
+        end
+    end
+    UI:show(require("ui/widget/confirmbox"):new{
+        text=string.format("《%s》%s 下载失败%s。\n%s\n尝试换源下载这一章？",details.title,details.name,
+            details.attempts and ("（已尝试 "..details.attempts.." 次）") or "",reason),
+        ok_text="尝试换源",cancel_text="保留失败",
+        ok_callback=function() answer(true) end,cancel_callback=function() answer(false) end,
+    })
 end
 
 function Queue.start(q,resume)
@@ -47,15 +67,32 @@ function Queue.start(q,resume)
                 if not q.jobs[job.ticket] then return end
                 q.jobs[job.ticket]=nil
                 q.active=q.active-1
-                Downloads.finish(q.index,job,not data and (err or "下载失败。") or nil)
-                Queue.notify(q,job,data,err)
-                if err and (err:find("连接") or err:find("超时") or err:find("认证")) then
+                local source_error=data and data.source_error
+                if source_error then data,err=nil,source_error end
+                local offline=not job.repair and err and (err:find("无法连接服务器",1,true)
+                    or err:find("连接超时",1,true) or err:find("认证失败",1,true))
+                local decision=source_error and not offline and Downloads.sourceFailure(q.index,job,q.settings,err)
+                if not decision or decision.action=="failed" then
+                    Downloads.finish(q.index,job,not data and (err or "下载失败。") or nil)
+                    Queue.notify(q,job,data,err)
+                elseif decision.action=="ask" and ((q.owner and q.owner.alive) or q.listeners[job.manga.."/"..job.id]) then
+                    Queue.askRepair(q,job,decision,err)
+                end
+                if offline then
                     q.waiting=true
                     Queue.notifyWaiting(q,err)
                 end
                 redraw(q,job.manga)
                 Queue.start(q)
             end)
+        end
+        if q.retry_timer then UI:unschedule(q.retry_timer); q.retry_timer=nil end
+        if not q.waiting and q.active < math.min(5, tonumber(q.settings.max_parallel) or 1) then
+            local at=Downloads.nextRetry(q.index)
+            if at then
+                q.retry_timer=function() q.retry_timer=nil; Queue.start(q) end
+                UI:scheduleIn(math.max(0.1,at-os.time()),q.retry_timer)
+            end
         end
         if started then redraw(q) end
     end)

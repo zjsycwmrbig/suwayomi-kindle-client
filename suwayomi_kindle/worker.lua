@@ -6,6 +6,7 @@ local Chapters = require("suwayomi_kindle/chapters")
 local Worker = {}
 
 function Worker.run(config, action, input)
+    if action == "verify_flash" then return require("suwayomi_kindle/deepseek").verify() end
     if action == "verify" then return Connection.test(config) end
     if action == "anilist_recommend" then return require("suwayomi_kindle/anilist").recommend(input.id,input.title,input.limit) end
     if action == "scan_downloads" then return require("suwayomi_kindle/tasks").scan(Index.new(config),input.directory) end
@@ -60,7 +61,21 @@ function Worker.run(config, action, input)
         if not ok then return nil, failure end
         return Chapters.setRead(Index.new(config),input.manga,input.id,input.read)
     elseif action == "download" then
-        return Chapters.download(Index.new(config),client,input)
+        local index = Index.new(config)
+        if input.repair then
+            local candidate, reason = require("suwayomi_kindle/repair").select(index,client,input)
+            if not candidate then return nil, reason end
+            input.match,input.remote_id,input.remote_manga = candidate,candidate.id,candidate.manga
+        end
+        local data, reason, category = Chapters.download(index,client,input)
+        if not data and category=="source" and input.match and input.match.reused then
+            local next_match,why=require("suwayomi_kindle/repair").select(index,client,input,input.match)
+            if not next_match then return nil,why end
+            input.match,input.remote_id,input.remote_manga=next_match,next_match.id,next_match.manga
+            return Chapters.download(index,client,input)
+        end
+        if not data and category=="source" and not input.repair then return {source_error=reason} end
+        return data, reason
     elseif action == "covers" then
         return require("suwayomi_kindle/covers").fetch(client, input)
     end

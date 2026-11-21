@@ -43,7 +43,7 @@ function Navigation.select(plugin,chapter,from_end)
         end)
     end
     if chapter.path then open(chapter.path); return end
-    local function download()
+    local function download(mode)
         if not current() then return end
         local q=Queue.attach(origin.index,origin.config,plugin.settings_store:load("download"))
         local paused,err=origin.index:with_db(function(db)
@@ -54,7 +54,7 @@ function Navigation.select(plugin,chapter,from_end)
             notice(err or "下载已暂停，请在下载任务中继续。")
             return
         end
-        local result,why=Downloads.enqueue(origin.index,origin.manga,"single",chapter.id)
+        local result,why=Downloads.enqueue(origin.index,origin.manga,mode,chapter.id)
         if not result then cancel_intent(plugin); notice(why); return end
         -- A download may have finished between displaying the prompt and confirming.
         local latest=Chapters.locate(origin.index,origin.manga,chapter.id)
@@ -67,9 +67,9 @@ function Navigation.select(plugin,chapter,from_end)
         Queue.start(q,true)
     end
     local policy=Downloads.policy(origin.index,origin.manga)
-    if from_end and policy and policy.ahead>0 then download()
+    if from_end and policy and policy.ahead>0 then download("next_auto")
     else UI:show(require("ui/widget/confirmbox"):new{text="下载《" .. chapter.name .. "》并打开？",
-        ok_callback=download,cancel_callback=function() if current() then cancel_intent(plugin) end end}) end
+        ok_callback=function() download("single") end,cancel_callback=function() if current() then cancel_intent(plugin) end end}) end
 end
 
 function Navigation.contents(plugin)

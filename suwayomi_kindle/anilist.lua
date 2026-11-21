@@ -61,6 +61,11 @@ local function media(row)
         title=row.title.english or row.title.romaji or row.title.native}
 end
 
+function AniList.titlesById(id)
+    local data=request("query($id:Int!){Media(id:$id,type:MANGA){"..fields.."}}",{id=id})
+    return data and media(data.Media)
+end
+
 function AniList.recommend(id, title, limit, transport)
     if not id then
         local resolved, err = AniList.resolve(title, transport)

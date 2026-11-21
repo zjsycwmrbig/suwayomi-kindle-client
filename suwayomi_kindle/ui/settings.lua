@@ -195,8 +195,61 @@ function methods:build_download_settings(screen_width, body_height)
         stepper(self, width, "全局已读删除策略", policies, cfg.retention,
             function(v) save_section(self, "download", {retention = v}) end),
         rule(width),
+        SettingRow:new{label="失败重试与换源",value="DeepSeek Flash",width=width,
+            callback=function() self.settings_route="repair"; self:refresh() end},
+        rule(width),
     }
     return self:settings_page_frame(screen_width, body_height, width, column)
+end
+
+function methods:build_repair_settings(screen_width,height)
+    local width=math.min(screen_width-scale(48),scale(520))
+    local flash=require("suwayomi_kindle/deepseek")
+    local cfg=self.settings.download
+    local column=Column:new{align="left",spacing(10)}
+    local function count(title,key,first,last)
+        local opts={}
+        for i=first,last do opts[#opts+1]={i,tostring(i)} end
+        column[#column+1]=stepper(self,width,title,opts,cfg[key],function(v) save_section(self,"download",{[key]=v}) end)
+        column[#column+1]=rule(width)
+    end
+    local function toggle(title,key)
+        column[#column+1]=SettingRow:new{label=(cfg[key] and "☑  " or "☐  ")..title,width=width,single_line=true,
+            callback=function() save_section(self,"download",{[key]=not cfg[key]}) end}
+        column[#column+1]=rule(width)
+    end
+    count("原源最大重试次数","retries",0,5)
+    count("最多搜索备用源","repair_sources",1,10)
+    toggle("自动下载失败时换源","repair_auto")
+    toggle("批量下载失败时换源","repair_batch")
+    column[#column+1]=SettingRow:new{label="DeepSeek 密钥",width=width,value=flash.configured() and "已配置" or "未配置",
+        callback=function()
+            local dialog
+            dialog=require("ui/widget/inputdialog"):new{title="DeepSeek API 密钥",text_type="password",input="",
+                input_hint="输入新密钥，留空保存可清除",buttons={{
+                    {text="取消",callback=function() UI:close(dialog) end},
+                    {text="保存",callback=function()
+                        local ok,why=flash.save(Config.trim(dialog:getInputText()))
+                        if not ok then UI:show(require("ui/widget/infomessage"):new{text=why}); return end
+                        UI:close(dialog)
+                        self.flash_status=nil
+                        self:refresh()
+                    end}}}}
+            UI:show(dialog)
+            dialog:onShowKeyboard()
+        end}
+    column[#column+1]=rule(width)
+    column[#column+1]=SettingRow:new{label="验证 Flash 连接",width=width,value=self.flash_status or flash.model,
+        callback=function()
+            if self.flash_verifying then return end
+            self.flash_status,self.flash_verifying="正在验证…",true
+            self:refresh()
+            Worker.start(UI,{},"verify_flash",{},function(result,err)
+                self.flash_status,self.flash_verifying=result and "Flash 模型可用" or err,false
+                if self.alive and self.settings_route=="repair" then self:refresh() end
+            end)
+        end}
+    return self:settings_page_frame(screen_width,height,width,column)
 end
 
 function methods:build_library_settings(screen_width, body_height)
@@ -431,7 +484,7 @@ function methods:onCloseDialog()
         or (self.selected_tab == "browse" and (self.browse.global or self.browse.source))) then
         self:catalog_back()
     elseif self.selected_tab == "settings" and self.settings_route ~= "index" then
-        self.settings_route = (self.settings_route == "languages" or self.settings_route == "recommendation") and "browse" or "index"
+        self.settings_route = self.settings_route == "repair" and "download" or (self.settings_route == "languages" or self.settings_route == "recommendation") and "browse" or "index"
         self:refresh()
     else
         self:close()

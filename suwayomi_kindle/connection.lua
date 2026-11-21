@@ -434,11 +434,11 @@ function Connection:manga(id)
     return rows[1]
 end
 
-function Connection:chapterPage(id, offset, limit)
+function Connection:chapterPage(id, offset, limit, with_number)
     local data, err = self:request([[query($id:Int!,$first:Int!,$offset:Int!){
         chapters(filter:{mangaId:{equalTo:$id}},first:$first,offset:$offset,
         order:[{by:SOURCE_ORDER,byType:ASC},{by:ID,byType:ASC}]){
-        totalCount pageInfo{hasNextPage} nodes{id name scanlator isRead lastPageRead}}}]],
+        totalCount pageInfo{hasNextPage} nodes{id name scanlator isRead lastPageRead ]] .. (with_number and "chapterNumber" or "") .. [[}}}]],
         {id = tonumber(id), offset = offset, first = limit})
     local page = data and data.chapters
     if not page or not is_array(page.nodes) or type(page.totalCount) ~= "number"

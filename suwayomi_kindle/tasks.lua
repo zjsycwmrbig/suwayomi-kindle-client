@@ -17,7 +17,7 @@ end
 local queries = {
     queue = {from = [[queue q LEFT JOIN manga m ON m.id=q.manga
         LEFT JOIN chapter c ON c.manga=q.manga AND c.id=q.id]],
-        fields = "q.manga,q.id,m.title,c.name,q.state,q.error,NULL,q.pages_done,q.pages_total",
+        fields = "q.manga,q.id,m.title,c.name,q.state,q.error,NULL,q.pages_done,q.pages_total,q.repair,q.ticket",
         order = "CASE q.state WHEN 'active' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,q.priority,q.rowid"},
     files = {from = [[files f LEFT JOIN manga m ON m.id=f.manga
         LEFT JOIN chapter c ON c.manga=f.manga AND c.id=f.id]],
@@ -81,6 +81,7 @@ function Tasks.page(index,view,page,limit,options)
                 item.key,item.file_count = "folder:" .. item.manga,tonumber(r[8])
             elseif view=="queue" then
                 item.key,item.error = "queue:" .. item.manga .. ":" .. item.id,r[6]
+                item.repair,item.ticket=r[10],tonumber(r[11])
                 item.pages_done,item.pages_total = tonumber(r[8]),tonumber(r[9])
             elseif scope == "orphan" then item.key="orphan:" .. item.path
             elseif item.manga and item.id then item.key=view .. ":" .. item.manga .. ":" .. item.id end

@@ -445,7 +445,7 @@ function Page:build_tasks(screen_width,height)
                         local retry=item.state=="failed"
                         local resume=item.state=="paused" or retry or (data.paused and item.state=="queued")
                         local dialog
-                        dialog=require("ui/widget/buttondialog"):new{title=label,buttons={{{text=resume and (retry and "重试任务" or "继续任务") or "暂停任务",
+                        local buttons={{{text=resume and (retry and "重试任务" or "继续任务") or "暂停任务",
                             callback=function()
                                 UI:close(dialog)
                                 local ok,why=Queue.pause(scheduler(self),not resume,item)
@@ -453,7 +453,14 @@ function Page:build_tasks(screen_width,height)
                             end}},{{text="删除任务及文件",callback=function()
                                 UI:close(dialog)
                                 delete_tasks(self,{item})
-                            end}}}}
+                            end}}}
+                        if item.repair=="ask" and retry then
+                            table.insert(buttons,1,{{text="尝试换源",callback=function()
+                                UI:close(dialog)
+                                Queue.askRepair(scheduler(self),item,item,item.reason or "原源下载失败。")
+                            end}})
+                        end
+                        dialog=require("ui/widget/buttondialog"):new{title=label,buttons=buttons}
                         UI:show(dialog)
                     elseif folder_actions then enter_folder(self,item)
                     else file_menu(self,item,label) end

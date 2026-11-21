@@ -68,6 +68,8 @@ local function search_names(item, order)
     return names, known
 end
 
+Recommendations.searchNames = search_names
+
 function Recommendations.preferredTitle(item, order)
     local names = search_names(item, order)
     return names[1] or item.title

@@ -27,20 +27,27 @@ local function retry_via_system_proxy(url, body)
     return content, tonumber(status)
 end
 
-local function post(host, path, payload, service)
+local function post(host, path, payload, service, token)
     local https = require("ssl.https")
     local lfs = require("libs/libkoreader-lfs")
     local ca = "/etc/ssl/certs/ca-certificates.crt"
     if not lfs.attributes(ca) then ca = "/etc/ssl/cert.pem" end
+    if not lfs.attributes(ca) then ca = "data/ca-bundle.crt" end
     local tls = https.tcp{verify="peer", cafile=ca}
-    local body = json.encode(payload)
+    local body = payload and json.encode(payload)
+    local headers = {["User-Agent"]=user_agent}
+    if body then headers["Content-Type"], headers["Content-Length"] = "application/json", tostring(#body) end
+    if token then
+        assert(host=="api.deepseek.com" and not token:find("[%c%s]"))
+        headers.Authorization = "Bearer " .. token
+    end
     local chunks, size = {}, 0
     local timeout = https.TIMEOUT
-    https.TIMEOUT = 8
+    https.TIMEOUT = token and 30 or 8
     local called, ok, code = pcall(require("socket.http").request, {
-        url="https://" .. host .. path, method="POST", redirect=false,
-        headers={ ["User-Agent"]=user_agent, ["Content-Type"]="application/json", ["Content-Length"]=tostring(#body) },
-        source=require("ltn12").source.string(body),
+        url="https://" .. host .. path, method=body and "POST" or "GET", redirect=false,
+        headers=headers,
+        source=body and require("ltn12").source.string(body),
         create=function()
             local conn = tls()
             local connect = conn.connect
@@ -70,13 +77,15 @@ local function post(host, path, payload, service)
     })
     https.TIMEOUT = timeout
     local response
-    if (not called or not ok) and jit.os == "OSX" then
+    if (not called or not ok) and not token and jit.os == "OSX" then
         response, code = retry_via_system_proxy("https://" .. host .. path, body)
         called, ok = response ~= nil, response ~= nil
     end
     if called and ok and code == 429 then return nil, service .. " 请求过多，请稍后再试。" end
+    if token and called and ok and code ~= 200 then return nil, service .. " HTTP " .. tostring(code) end
     if not called or not ok or code ~= 200 then return nil, "无法获取 " .. service .. " 数据。" end
     local decoded = json.decode(response or table.concat(chunks))
+    if token and type(decoded)=="table" then return decoded end
     if type(decoded) ~= "table" or type(decoded.data) ~= "table" or decoded.errors then
         return nil, service .. " 响应不完整。"
     end
