@@ -28,6 +28,20 @@ local basic_result = Connection.test({
 end)
 assert(basic_result.ok, basic_result.error)
 
+local transient_calls = 0
+local transient_result = Connection.test({
+    server_url = "http://suwayomi.test",
+    auth_method = "none",
+}, function()
+    transient_calls = transient_calls + 1
+    if transient_calls < 3 then
+        return {ok = false, status = 500, body = "Server Error"}
+    end
+    return {ok = true, status = 200, body = [[{"data":{"categories":{"nodes":[]}}}]]}
+end)
+assert(transient_result.ok, transient_result.error)
+equal(transient_calls, 3, "retries transient HTTP 500 responses")
+
 local calls = 0
 local login_result = Connection.test({
     server_url = "https://suwayomi.test/base",

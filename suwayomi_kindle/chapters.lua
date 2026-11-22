@@ -183,6 +183,7 @@ function Chapters.download(index, client, input)
     if not writer:open(tmp, "zip") then return nil, "无法创建章节文件，请检查下载目录。" end
     writer:setZipCompression("store")
     local missing, done = {}, 0
+    local server_failed = {}
     local placeholder_state = (os.time() + require("ffi").C.getpid() + id * 97) % 2147483647 + 1
     local function next_placeholder()
         placeholder_state = placeholder_state * 48271 % 2147483647
@@ -211,6 +212,9 @@ function Chapters.download(index, client, input)
         if not ext then
             missing[#missing+1] = i
             page_error = reason or "图片获取失败或格式无效。"
+            if page_error:find("服务器返回 HTTP 5", 1, true) then
+                server_failed[i] = true
+            end
             return
         end
         assert(writer:addFileFromMemory(string.format("%05d.%s",i,ext),bytes))
@@ -237,7 +241,17 @@ function Chapters.download(index, client, input)
         os.remove(tmp)
         return nil,"章节图片处理或写入失败，请检查剩余空间。"
     end
-    if #missing>0 and (done==0 or not input.allow_missing_pages) then
+    if #missing>0 and done==0 then
+        os.remove(tmp)
+        local all_server_failed = true
+        for _, page in ipairs(missing) do
+            if not server_failed[page] then all_server_failed = false; break end
+        end
+        if all_server_failed then
+            return nil,string.format("章节图片暂时无法从源获取（HTTP 5xx），将重试 · 缺 %d 页",#missing),"source"
+        end
+    end
+    if #missing>0 and not input.allow_missing_pages then
         os.remove(tmp)
         return nil,string.format("缺 %d 页（第 %d 页等）· %s",#missing,missing[1],page_error),"missing_pages"
     end

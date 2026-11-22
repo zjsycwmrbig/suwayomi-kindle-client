@@ -12,6 +12,7 @@ local Connection = {}
 
 local MAX_RESPONSE_BYTES = 256 * 1024
 local REQUEST_TIMEOUT_SECONDS = 15
+local TRANSIENT_RETRIES = 2
 local BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
 
 local VERIFY_QUERY = [[
@@ -188,6 +189,38 @@ local function request_graphql(settings, query, variables, request_fn, session)
     return (request_fn or perform_http_request)(endpoint(settings.server_url), body, auth_headers(settings, session))
 end
 
+local function transient_status(status)
+    return status == 408 or status == 425 or status == 429
+        or (type(status) == "number" and status >= 500 and status <= 599)
+end
+
+local function transient_graphql(response)
+    if not response or not response.ok then return transient_status(response and response.status) end
+    local payload = decode(response.body)
+    local errors = payload and payload.errors
+    if type(errors) ~= "table" then return false end
+    for _, item in ipairs(errors) do
+        local message = type(item) == "table" and tostring(item.message or ""):lower() or ""
+        if message:find("internal", 1, true) or message:find("exception", 1, true)
+            or message:find("temporar", 1, true) or message:find("timeout", 1, true)
+            or message:find("http 5", 1, true) or message:find("status 5", 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function retry_request(request)
+    local response = request()
+    for attempt = 1, TRANSIENT_RETRIES do
+        if not transient_graphql(response) then break end
+        local socket = require("socket")
+        socket.sleep(0.15 * attempt)
+        response = request()
+    end
+    return response
+end
+
 local function valid_token(value)
     return type(value) == "string"
         and value ~= ""
@@ -266,7 +299,9 @@ function Connection.test(settings, request_fn)
 end
 
 function Connection:send(query, variables)
-    return request_graphql(self.settings, query, variables, self.transport, self.session)
+    return retry_request(function()
+        return request_graphql(self.settings, query, variables, self.transport, self.session)
+    end)
 end
 
 function Connection:request(query, variables)
@@ -482,7 +517,9 @@ function Connection:pageImage(path)
     elseif path:match("^api/") then url = base .. "/" .. path
     else return end
     local headers = url:sub(1,#base+1) == base .. "/" and auth_headers(self.settings, self.session) or {}
-    local r = (self.transport or perform_http_request)(url, nil, headers, 24 * 1024 * 1024)
+    local r = retry_request(function()
+        return (self.transport or perform_http_request)(url, nil, headers, 24 * 1024 * 1024)
+    end)
     if not r.ok then return nil,verify_payload(r).error end
     return r.body
 end
