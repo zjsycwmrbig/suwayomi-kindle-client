@@ -29,7 +29,13 @@ function fixture:onReaderReady()
   local reader=self.ui
   local path=reader.document.file
   if path:match('/91%.cbz$') then
-   if package.loaded.flow_returned then
+   if package.loaded.flow_stage=='back' then
+    assert(reader:getCurrentPage()==2,'previous chapter did not open at its last page')
+    package.loaded.flow_stage='returned'
+    reader.paging:onGotoPage(2)
+    reader.paging:onGotoPageRel(1)
+    return
+   elseif package.loaded.flow_returned then
     print('NATIVE CBZ FLOW PASSED')
     UI:quit()
     return
@@ -43,6 +49,11 @@ function fixture:onReaderReady()
    reader.paging:onGotoPageRel(1)
   elseif path:match('/6%.cbz$') then
    assert(reader:getCurrentPage()==1)
+   if package.loaded.flow_stage~='returned' then
+    package.loaded.flow_stage='back'
+    reader.paging:onGotoPageRel(-1)
+    return
+   end
    reader.toc:onShowToc()
    local home=reader['suwayomi-kindle'].home
    assert(home.reader_origin.id==6 and home.directory.target==6)
@@ -100,7 +111,7 @@ def run(profile):
     result = subprocess.run(["./luajit", "reader.lua", paths[0]], env=env, capture_output=True, text=True, timeout=12)
     if result.returncode or "NATIVE CBZ FLOW PASSED" not in result.stdout:
         raise RuntimeError((result.stdout + result.stderr)[-3200:])
-    print("Native CBZ table of contents, chapter selection and end-of-book transition passed")
+    print("Native CBZ table of contents, previous/next chapter and end-of-book transition passed")
 
 
 if __name__ == "__main__":

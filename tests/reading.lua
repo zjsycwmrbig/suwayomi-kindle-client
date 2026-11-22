@@ -19,6 +19,8 @@ function api:libraryPage()
     return {rows={{id=m,title="测试漫画",author="",source="",thumbnail="",unread=8,chapters=8}},total=1,more=false}
 end
 assert(Chapters.refresh(index,api,m).count==8)
+assert(Chapters.locate(index,m,8,-1).id==7)
+assert(not Chapters.locate(index,m,1,-1))
 local function status() return assert(Records.status(index)) end
 local function mark(id,range,read,page)
     return assert(Records.mark(index,m,{id=id,pos=id},range,read,page))

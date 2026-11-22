@@ -23,7 +23,7 @@ function Navigation.switchDocument(reader,path,after_open)
     reader:switchDocument(path,true,after_open)
 end
 
-function Navigation.select(plugin,chapter,from_end)
+function Navigation.select(plugin,chapter,from_end,to_last)
     local origin=plugin.reading_chapter
     if not origin or chapter.id==origin.id then return end
     cancel_intent(plugin)
@@ -37,9 +37,16 @@ function Navigation.select(plugin,chapter,from_end)
             if not current() then return end
             cancel_intent(plugin)
             if require("libs/libkoreader-lfs").attributes(path,"mode")~="file" then notice("章节文件已移走。"); return end
-            local first_page
-            if from_end then first_page=function(reader) reader.paging:onGotoPage(1) end end
-            Navigation.switchDocument(plugin.ui,path,first_page)
+            local target_page
+            if from_end then
+                target_page=function(reader) reader.paging:onGotoPage(1) end
+            elseif to_last then
+                target_page=function(reader)
+                    local count=reader.paging.number_of_pages
+                    if count>0 then reader.paging:onGotoPage(count) end
+                end
+            end
+            Navigation.switchDocument(plugin.ui,path,target_page)
         end)
     end
     if chapter.path then open(chapter.path); return end
@@ -107,6 +114,15 @@ function Navigation.install(plugin)
         else notice("已读完本漫画的最后一章。") end
         return true
     end
+    local function retreat()
+        if not reader.document then return true end
+        if plugin.chapter_intent then return true end
+        local previous,err=Chapters.locate(row.index,row.manga,row.id,-1)
+        if err then notice(err); return true end
+        if previous then Navigation.select(plugin,previous,false,true)
+        else notice("已经是第一章。") end
+        return true
+    end
     local function finish(native,...)
         if plugin.reading_chapter~=row then return original_end(native,...) end
         return advance(native)
@@ -115,10 +131,18 @@ function Navigation.install(plugin)
         if plugin.reading_chapter~=row or no_page_turn then
             return original_page_turn(native,diff,no_page_turn,...)
         end
-        if diff<=0 or native.current_page<native.number_of_pages then
+        if diff==0 then
             return original_page_turn(native,diff,no_page_turn,...)
         end
         local visible,area=native.visible_area,native.page_area
+        if diff<0 and native.current_page==1 then
+            local at_left=visible.x<=area.x+1
+            local at_top=visible.y<=area.y+1
+            if at_left and at_top then return retreat() end
+        end
+        if diff<=0 or native.current_page<native.number_of_pages then
+            return original_page_turn(native,diff,no_page_turn,...)
+        end
         local at_right=visible.x+visible.w>=area.x+area.w-1
         local at_bottom=visible.y+visible.h>=area.y+area.h-1
         if not at_right or not at_bottom then
