@@ -53,6 +53,23 @@ function Downloads.enqueue(index,manga,mode,id)
     end)
 end
 
+-- Put one chapter directly into the source-repair path. The original source
+-- is skipped, while the chapter's reading record and local metadata remain.
+function Downloads.enqueueRepair(index,manga,id)
+    return index:with_db(function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local active=db:prepare("SELECT 1 FROM queue WHERE manga=? AND id=? AND state='active'")
+            :bind(manga,id):step()
+        if active then db:exec("ROLLBACK"); return nil,"该章节正在下载，请先暂停任务。" end
+        db:prepare([[INSERT INTO queue(manga,id,priority,state,error,repair,retries,retry_at)
+            VALUES(?,?,0,'queued',NULL,'ready',0,0)
+            ON CONFLICT(manga,id) DO UPDATE SET priority=0,state='queued',error=NULL,
+                repair='ready',retries=0,retry_at=0]]):bind(manga,id):step()
+        db:exec("COMMIT")
+        return true
+    end)
+end
+
 function Downloads.claim(index,directory)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")

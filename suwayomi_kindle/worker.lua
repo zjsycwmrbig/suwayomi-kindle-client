@@ -62,18 +62,30 @@ function Worker.run(config, action, input)
         return Chapters.setRead(Index.new(config),input.manga,input.id,input.read)
     elseif action == "download" then
         local index = Index.new(config)
-        if input.repair then
-            local candidate, reason = require("suwayomi_kindle/repair").select(index,client,input)
-            if not candidate then return nil, reason end
-            input.match,input.remote_id,input.remote_manga = candidate,candidate.id,candidate.manga
+        local Repair = require("suwayomi_kindle/repair")
+        local function use_candidate(candidate)
+            input.match = candidate
+            input.remote_id = candidate.id
+            input.remote_manga = candidate.manga
         end
-        local data, reason, category = Chapters.download(index,client,input)
-        local source_failure = category=="source" or category=="missing_pages"
-        if not data and source_failure and input.match and input.match.reused then
-            local next_match,why=require("suwayomi_kindle/repair").select(index,client,input,input.match)
-            if not next_match then return nil,why end
-            input.match,input.remote_id,input.remote_manga=next_match,next_match.id,next_match.manga
-            return Chapters.download(index,client,input)
+        if input.repair then
+            local candidate, reason = Repair.select(index,client,input)
+            if not candidate then return nil, reason end
+            input.alternatives = candidate.alternatives or {candidate}
+            input.alternative_index = candidate.alternative_index or 1
+            use_candidate(candidate)
+        end
+        local data, reason, category, source_failure
+        while true do
+            data, reason, category = Chapters.download(index,client,input)
+            source_failure = category=="source" or category=="missing_pages"
+            if not input.repair or not source_failure then break end
+            local next_index=(input.alternative_index or 1)+1
+            local next_match=input.alternatives and input.alternatives[next_index]
+            if not next_match then break end
+            input.alternative_index=next_index
+            use_candidate(next_match)
+            require("suwayomi_kindle/repair_log").add(index,input,"换源候选 "..next_index.."/"..#input.alternatives)
         end
         if not data and source_failure and not input.repair then return {source_error=reason,pages_exhausted=category=="missing_pages"} end
         return data, reason

@@ -150,14 +150,14 @@ function Repair.select(index,client,job,exclude)
     end
     if #candidates==0 then return nil,last_error and ("候选源查询失败："..last_error) or "备用源中没有匹配章节。" end
     local available,choices={},{}
+    local reused_position
     local last_failure
     for i,match in ipairs(remote) do
         local pages,reason=require("suwayomi_kindle/chapters").pages(client,match.manga,match.id)
         if pages then
             match.pages=pages
             if match.reused then
-                Log.add(index,job,"复用上次匹配 · "..candidates[i].source.." · "..match.name)
-                return match
+                reused_position=#available+1
             end
             available[#available+1]=match
             choices[#choices+1]=candidates[i]
@@ -166,11 +166,32 @@ function Repair.select(index,client,job,exclude)
         end
     end
     if #available==0 then return nil,"备用章节均无法取页："..(last_failure or "没有可下载的漫画页。") end
-    local selected,reason=Flash.choose(target,choices)
-    if selected then
-        Log.add(index,job,"Flash 选择 · "..choices[selected].source.." · "..choices[selected].chapter)
+    if reused_position then
+        local match=available[reused_position]
+        match.alternatives={match}
+        match.alternative_index=1
+        Log.add(index,job,"复用上次匹配 · "..choices[reused_position].source.." · "..choices[reused_position].chapter)
+        return match,nil
     end
-    return available[selected],reason
+    local selected,reason=Flash.choose(target,choices)
+    if type(selected)=="number" then selected={selected} end
+    if not selected or #selected==0 then return nil,reason end
+    local ordered,seen={},{}
+    for _,position in ipairs(selected) do
+        if available[position] and not seen[position] then
+            seen[position]=true
+            ordered[#ordered+1]=available[position]
+        end
+    end
+    if #ordered==0 then return nil,"Flash 返回了未知候选。" end
+    for i,match in ipairs(ordered) do
+        match.alternatives=ordered
+        match.alternative_index=i
+    end
+    local first=selected[1]
+    Log.add(index,job,"Flash 选择 · "..choices[first].source.." · "..choices[first].chapter
+        .." · 共 "..#ordered.." 个候选，按顺序尝试")
+    return ordered[1],nil
 end
 
 return Repair

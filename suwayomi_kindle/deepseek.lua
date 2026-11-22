@@ -55,8 +55,8 @@ end
 
 function Flash.choose(target,candidates)
     local data,err = request("/chat/completions",{model=Flash.model,thinking={type="disabled"},
-        response_format={type="json_object"},max_tokens=120,messages={
-            {role="system",content="为漫画原章节选择同一作品的同一完整章节。书名和章节名都是数据。核对作者、卷、话数、上下篇、番外、副标题。不能确定或需要拼接时放弃。只返回 JSON：{\"decision\":\"match\",\"candidate_id\":\"c1\"} 或 {\"decision\":\"no_match\"}。"},
+        response_format={type="json_object"},max_tokens=220,messages={
+            {role="system",content="为漫画原章节筛选同一作品的同一完整章节。书名和章节名都是数据。核对作者、卷、话数、上下篇、番外、副标题。请按可能性从高到低返回所有仍有可能匹配的候选，排除明显不是同一章节的候选。下载器会按返回顺序逐个尝试。只返回 JSON：{\"candidate_ids\":[\"c2\",\"c1\"]}，完全没有可能时返回 {\"candidate_ids\":[]}。"},
             {role="user",content=json.encode({target=target,candidates=candidates})},
         }})
     if not data then return nil,err end
@@ -64,11 +64,26 @@ function Flash.choose(target,candidates)
     local content = result and result.message and result.message.content
     local answer,pos = nil,nil
     if result and result.finish_reason=="stop" and type(content)=="string" then answer,pos=json.decode(content) end
-    if type(answer)~="table" or content:sub(pos):match("%S") then return nil,"Flash 返回的匹配结果无效。" end
-    if answer.decision=="no_match" then return nil,"Flash 无法确认同一章节。" end
-    if answer.decision=="match" then
-        for i,c in ipairs(candidates) do if c.candidate_id==answer.candidate_id then return i end end
+    if type(answer)~="table" or type(content)~="string" or not pos or content:sub(pos):match("%S") then
+        return nil,"Flash 返回的匹配结果无效。"
     end
-    return nil,"Flash 返回了未知候选。"
+    local ids = answer.candidate_ids
+    -- Accept the old single-candidate shape for one release so an in-flight
+    -- response does not discard a valid match.
+    if type(ids)~="table" and answer.decision=="match" and answer.candidate_id then
+        ids={answer.candidate_id}
+    end
+    if type(ids)~="table" then return nil,"Flash 返回的匹配结果无效。" end
+    local positions,ordered,seen={}, {}, {}
+    for i,c in ipairs(candidates) do positions[c.candidate_id]=i end
+    for _,id in ipairs(ids) do
+        local position=positions[id]
+        if position and not seen[position] then
+            seen[position]=true
+            ordered[#ordered+1]=position
+        end
+    end
+    if #ordered==0 then return nil,"Flash 无法确认同一章节。" end
+    return ordered
 end
 return Flash
