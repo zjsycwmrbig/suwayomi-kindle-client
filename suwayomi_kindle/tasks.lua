@@ -16,8 +16,9 @@ end
 
 local queries = {
     queue = {from = [[queue q LEFT JOIN manga m ON m.id=q.manga
-        LEFT JOIN chapter c ON c.manga=q.manga AND c.id=q.id]],
-        fields = "q.manga,q.id,m.title,c.name,q.state,q.error,NULL,q.pages_done,q.pages_total,q.repair,q.ticket",
+        LEFT JOIN chapter c ON c.manga=q.manga AND c.id=q.id
+        LEFT JOIN files f ON f.manga=q.manga AND f.id=q.id]],
+        fields = "q.manga,q.id,m.title,c.name,q.state,q.error,f.path,q.pages_done,q.pages_total,q.repair,q.ticket",
         order = "CASE q.state WHEN 'active' THEN 0 WHEN 'queued' THEN 1 WHEN 'paused' THEN 2 ELSE 3 END,q.priority,q.rowid"},
     files = {from = [[files f LEFT JOIN manga m ON m.id=f.manga
         LEFT JOIN chapter c ON c.manga=f.manga AND c.id=f.id]],
@@ -128,6 +129,15 @@ function Tasks.retry(index,selections)
         end
         db:exec("COMMIT")
         return {count=count}
+    end)
+end
+
+function Tasks.readState(index,manga,id)
+    return index:with_db(function(db)
+        local row=db:prepare("SELECT is_read FROM chapter WHERE manga=? AND id=?")
+            :bind(tostring(manga),tonumber(id)):step()
+        if not row then return nil end
+        return tonumber(row[1])==1
     end)
 end
 

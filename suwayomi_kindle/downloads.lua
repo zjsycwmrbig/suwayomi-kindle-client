@@ -53,21 +53,35 @@ function Downloads.enqueue(index,manga,mode,id)
     end)
 end
 
--- Put one chapter directly into the source-repair path. The original source
--- is skipped, while the chapter's reading record and local metadata remain.
-function Downloads.enqueueRepair(index,manga,id)
+-- Put chapters directly into the source-repair path. The original source is
+-- skipped, while reading records and local metadata remain untouched.
+function Downloads.enqueueRepairs(index,selections)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")
-        local active=db:prepare("SELECT 1 FROM queue WHERE manga=? AND id=? AND state='active'")
-            :bind(manga,id):step()
-        if active then db:exec("ROLLBACK"); return nil,"该章节正在下载，请先暂停任务。" end
-        db:prepare([[INSERT INTO queue(manga,id,priority,state,error,repair,retries,retry_at)
+        local exists=db:prepare("SELECT 1 FROM chapter WHERE manga=? AND id=?")
+        local queue=db:prepare([[INSERT INTO queue(manga,id,priority,state,error,repair,retries,retry_at)
             VALUES(?,?,0,'queued',NULL,'ready',0,0)
             ON CONFLICT(manga,id) DO UPDATE SET priority=0,state='queued',error=NULL,
-                repair='ready',retries=0,retry_at=0]]):bind(manga,id):step()
+                repair='ready',retries=0,retry_at=0,ticket=NULL,pages_done=NULL,pages_total=NULL]])
+        local count=0
+        for _,item in ipairs(selections or {}) do
+            local manga,id=tostring(item.manga),tonumber(item.id)
+            if manga:match("^%d+$") and id and id>0 and id%1==0
+                and exists:reset():bind(manga,id):step() then
+                queue:reset():bind(manga,id):step()
+                count=count+1
+            end
+        end
         db:exec("COMMIT")
-        return true
+        return {count=count}
     end)
+end
+
+function Downloads.enqueueRepair(index,manga,id)
+    local result,err=Downloads.enqueueRepairs(index,{{manga=manga,id=id}})
+    if not result then return nil,err end
+    if result.count~=1 then return nil,"该章节不在当前漫画目录中。" end
+    return true
 end
 
 function Downloads.claim(index,directory)

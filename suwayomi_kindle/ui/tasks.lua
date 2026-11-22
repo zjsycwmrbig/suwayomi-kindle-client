@@ -12,6 +12,7 @@ local Icons = require("suwayomi_kindle/ui/icons")
 local Tasks = require("suwayomi_kindle/tasks")
 local Downloads = require("suwayomi_kindle/downloads")
 local Queue = require("suwayomi_kindle/queue")
+local Records = require("suwayomi_kindle/records")
 local Page = {}
 local states = {active="下载中",queued="排队中",paused="已暂停",failed="失败",saved="已下载"}
 local filters = {
@@ -108,6 +109,139 @@ local function retry_selected(home,data)
     home:refresh()
 end
 
+local function repair_selected(home,items)
+    local selected=items or selection_items(home.task_selection)
+    if #selected==0 then notice("请先选择下载任务。"); return end
+    selected=Tasks.expandFiles(home:local_index(),selected)
+    if not selected or #selected==0 then notice("所选内容中没有可下载的章节。"); return end
+    UI:show(require("ui/widget/confirmbox"):new{
+        text=string.format("将所选 %d 个章节切换到备用源下载？原源将跳过，阅读记录会保留。",#selected),
+        ok_text="换源下载",
+        ok_callback=function()
+            local result,err=Queue.repair(scheduler(home),selected)
+            if not result then notice(err or "无法安排换源下载。"); return end
+            clear_selection(home)
+            notice(string.format("已安排 %d 个章节换源下载。",result.count))
+            if home.alive then home:refresh() end
+        end,
+    })
+end
+
+local function rewrite_selected(home,items)
+    local selected=items or selection_items(home.task_selection)
+    if #selected==0 then notice("请先选择下载任务。"); return end
+    selected=Tasks.expandFiles(home:local_index(),selected)
+    if not selected or #selected==0 then notice("所选内容中没有可重写的章节。"); return end
+    UI:show(require("ui/widget/confirmbox"):new{
+        text=string.format("删除所选 %d 个章节的旧文件和任务，并从原源重新下载？",#selected),
+        ok_text="重写下载",
+        ok_callback=function()
+            local reader=require("apps/reader/readerui").instance
+            local path=reader and reader.document and reader.document.file
+            local result,err=Queue.rewrite(scheduler(home),selected,path)
+            if not result then notice(err or "无法重写下载。"); return end
+            clear_selection(home)
+            notice(string.format("已重新安排 %d 个章节下载。",result.queued or 0))
+            if home.alive then home:refresh() end
+        end,
+    })
+end
+
+local function mark_task(home,item)
+    local read,err=Tasks.readState(home:local_index(),item.manga,item.id)
+    if read==nil then notice(err or "章节已不在目录中。"); return end
+    local result,mark_error=Records.mark(home:local_index(),item.manga,{id=item.id},"single",not read)
+    if not result then notice(mark_error or "无法更新阅读状态。"); return end
+    if result.changes>0 then
+        require("suwayomi_kindle/sync_service").schedule(home:local_index(),home.settings.connection)
+    end
+    notice(string.format("已标记为%s。",read and "未读" or "已读"))
+    home:refresh()
+end
+
+task_dialog=function(home,item,label,from_queue)
+    local dialog
+    local buttons={}
+    local function add(text,callback)
+        buttons[#buttons+1]={{text=text,callback=function()
+            UI:close(dialog)
+            callback()
+        end}}
+    end
+    local function detail_text()
+        local state=states[item.state] or item.state or "未知"
+        local parts={label,"章节："..(item.name or ("章节 "..tostring(item.id))),"状态："..state}
+        if item.pages_total and item.state=="active" then
+            parts[#parts+1]=string.format("进度：已写入 %d/%d 页",item.pages_done or 0,item.pages_total)
+        end
+        if item.repair=="ready" then parts[#parts+1]="换源：已排队"
+        elseif item.repair=="ask" then parts[#parts+1]="换源：等待确认" end
+        if item.error and item.error~="" then parts[#parts+1]="错误："..item.error end
+        if item.path then parts[#parts+1]="本机文件："..item.path end
+        return table.concat(parts,"\n")
+    end
+    add("任务详情",function() notice(detail_text()) end)
+    if item.path and require("libs/libkoreader-lfs").attributes(item.path,"mode")=="file" then
+        add("阅读本地文件",function() open_file(home,item) end)
+    end
+    if from_queue and (item.state=="active" or item.state=="queued") then
+        add("暂停任务",function()
+            local ok,err=Queue.pause(scheduler(home),true,item)
+            if not ok then notice(err or "无法暂停任务。") end
+        end)
+    elseif from_queue and (item.state=="paused" or item.state=="failed") then
+        add(item.state=="failed" and "重试原源" or "继续原源",function()
+            local ok,err=Queue.pause(scheduler(home),false,item)
+            if not ok then notice(err or "无法继续任务。") end
+        end)
+    end
+    add("换源下载",function()
+        UI:show(require("ui/widget/confirmbox"):new{
+            text="跳过原源并为这一章搜索备用源？阅读记录会保留。",
+            ok_text="换源下载",
+            ok_callback=function()
+                local result,err=Queue.repair(scheduler(home),{item})
+                if not result then notice(err or "无法安排换源下载。"); return end
+                notice("已安排换源下载。")
+                if home.alive then home:refresh() end
+            end,
+        })
+    end)
+    add("重写下载",function()
+        UI:show(require("ui/widget/confirmbox"):new{
+            text="删除旧文件和任务，并从原源重新下载这一章？",
+            ok_text="重写下载",
+            ok_callback=function()
+                local reader=require("apps/reader/readerui").instance
+                local path=reader and reader.document and reader.document.file
+                local result,err=Queue.rewrite(scheduler(home),{item},path)
+                if not result then notice(err or "无法重写下载。"); return end
+                notice("已重新安排下载。")
+                if home.alive then home:refresh() end
+            end,
+        })
+    end)
+    add("切换已读状态",function() mark_task(home,item) end)
+    add(from_queue and "删除任务及文件" or "删除文件",function()
+        UI:show(require("ui/widget/confirmbox"):new{
+            text="删除这一章的下载任务和本机文件？阅读记录会保留。",
+            ok_text="删除",
+            ok_callback=function()
+                local reader=require("apps/reader/readerui").instance
+                local path=reader and reader.document and reader.document.file
+                local result,err=Queue.delete(scheduler(home),{item},path)
+                if not result then notice(err or "删除失败。"); return end
+                local message=string.format("已移除 %d 个任务并清理 %d 个文件。",result.tasks or 0,result.files or 0)
+                if (result.kept or 0)>0 then message=message..string.format("保留 %d 个正在阅读的文件。",result.kept) end
+                notice(message)
+                if home.alive then home:refresh() end
+            end,
+        })
+    end)
+    dialog=require("ui/widget/buttondialog"):new{title=label,buttons=buttons}
+    UI:show(dialog)
+end
+
 local function delete_selected(home,items)
     local index=home:local_index()
     local selected,err=Tasks.expandFiles(index,items or selection_items(home.task_selection))
@@ -187,7 +321,12 @@ local function enter_folder(home,item)
     home:refresh()
 end
 
+local task_dialog
 local function file_menu(home,item,label)
+    if item.state~="folder" and item.state~="orphan" then
+        task_dialog(home,item,label,false)
+        return
+    end
     local dialog
     local function action(text,fn)
         return {{text=text,callback=function() UI:close(dialog); fn() end}}
@@ -198,9 +337,7 @@ local function file_menu(home,item,label)
         buttons[1]=action("查看章节文件",function()
             enter_folder(home,item)
         end)
-    elseif item.state=="orphan" then
-        buttons[1]=action("查看文件信息",function() notice(item.reason .. "\n" .. item.path) end)
-    else buttons[1]=action("阅读本章",function() open_file(home,item) end) end
+    else buttons[1]=action("查看文件信息",function() notice(item.reason .. "\n" .. item.path) end) end
     buttons[#buttons+1]=action(folder and "多选文件夹" or "多选文件",function()
         home.task_editing,home.task_selection=true,{}
         toggle_selection(home,item)
@@ -235,10 +372,12 @@ function Page:task_actions()
                 local data=Tasks.page(self:local_index(),"queue",1,1,{filter=self.task_filter})
                 retry_selected(self,data or {})
             end}
-            actions[#actions+1]={icon="trash","删除所选",function() delete_tasks(self) end}
-        else
-            actions[#actions+1]={icon="close","删除所选",function() delete_selected(self) end}
         end
+        actions[#actions+1]={icon="refresh","换源重下所选",function() repair_selected(self) end}
+        actions[#actions+1]={icon="download","重写所选",function() rewrite_selected(self) end}
+        actions[#actions+1]={icon="trash","删除所选",function()
+            if view=="queue" then delete_tasks(self) else delete_selected(self) end
+        end}
         return actions
     end
     if view=="queue" then
@@ -427,6 +566,8 @@ function Page:build_tasks(screen_width,height)
             else
                 label=item.title or ("漫画 " .. tostring(item.manga))
                 local state=data.paused and item.state=="queued" and "已暂停" or states[item.state] or item.state or ""
+                if item.repair=="ready" then state="换源排队"
+                elseif item.repair=="ask" then state="等待换源确认" end
                 value=(item.name or ("章节 " .. tostring(item.id))) .. " · " .. state
                 if item.pages_total and item.state=="active" then
                     value=value .. string.format(" · 已写入 %d/%d 页",item.pages_done,item.pages_total)
@@ -442,26 +583,7 @@ function Page:build_tasks(screen_width,height)
                 callback=function()
                     if self.task_editing then toggle_selection(self,item)
                     elseif view=="queue" then
-                        local retry=item.state=="failed"
-                        local resume=item.state=="paused" or retry or (data.paused and item.state=="queued")
-                        local dialog
-                        local buttons={{{text=resume and (retry and "重试任务" or "继续任务") or "暂停任务",
-                            callback=function()
-                                UI:close(dialog)
-                                local ok,why=Queue.pause(scheduler(self),not resume,item)
-                                if not ok then notice(why) end
-                            end}},{{text="删除任务及文件",callback=function()
-                                UI:close(dialog)
-                                delete_tasks(self,{item})
-                            end}}}
-                        if item.repair=="ask" and retry then
-                            table.insert(buttons,1,{{text="尝试换源",callback=function()
-                                UI:close(dialog)
-                                Queue.askRepair(scheduler(self),item,item,item.reason or "原源下载失败。")
-                            end}})
-                        end
-                        dialog=require("ui/widget/buttondialog"):new{title=label,buttons=buttons}
-                        UI:show(dialog)
+                        task_dialog(self,item,label,true)
                     elseif folder_actions then enter_folder(self,item)
                     else file_menu(self,item,label) end
                 end}

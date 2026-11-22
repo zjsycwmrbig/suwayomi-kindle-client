@@ -15,7 +15,6 @@ local Chapters = require("suwayomi_kindle/chapters")
 local Covers = require("suwayomi_kindle/covers")
 local Records = require("suwayomi_kindle/records")
 local Downloads = require("suwayomi_kindle/downloads")
-local Tasks = require("suwayomi_kindle/tasks")
 local Queue = require("suwayomi_kindle/queue")
 local MangaStatus = require("suwayomi_kindle/manga_status")
 local Manga = {}
@@ -222,45 +221,49 @@ end
 function Manga:chapter_actions(row)
     local dialog
     local index=self:local_index()
+    local item={manga=self.detail.id,id=row.id,path=row.path}
+    local q=Queue.attach(index,self.settings.connection,self.settings.download,self)
+    local function report(message)
+        self.catalog_message=message
+        self:refresh()
+        UI:show(require("ui/widget/infomessage"):new{text=message,timeout=4})
+    end
     local function open_path()
         local reader=require("apps/reader/readerui").instance
         return reader and reader.document and reader.document.file
     end
+    local function pause_download()
+        local ok,err=Queue.pause(q,true,item)
+        report(ok and "下载任务已暂停。" or (err or "无法暂停下载。"))
+    end
+    local function retry_download()
+        local ok,err=Queue.pause(q,false,item)
+        report(ok and "已重新排队，优先使用原源。" or (err or "无法继续下载。"))
+    end
     local function delete_download()
-        local result,err=Tasks.deleteQueue(index,{{manga=self.detail.id,id=row.id,path=row.path}},
-            Tasks.directory(self.settings.download.directory),open_path())
+        local result,err=Queue.delete(q,{item},open_path())
         if not result then
-            self.catalog_message="删除下载失败："..(err or "未知错误")
+            report("删除下载失败："..(err or "未知错误"))
         else
-            self.catalog_message=string.format("已删除下载任务 %d 个，文件 %d 个",result.tasks or 0,result.files or 0)
+            local message=string.format("已删除下载任务 %d 个，文件 %d 个",result.tasks or 0,result.files or 0)
+            if (result.kept or 0)>0 then message=message..string.format("；保留 %d 个正在阅读的文件",result.kept) end
+            report(message)
         end
-        self:refresh()
     end
     local function rewrite_download()
-        local result,err=Tasks.deleteQueue(index,{{manga=self.detail.id,id=row.id,path=row.path}},
-            Tasks.directory(self.settings.download.directory),open_path())
+        local result,err=Queue.rewrite(q,{item},open_path())
         if not result then
-            self.catalog_message="重写下载失败："..(err or "未知错误")
-        elseif (result.kept or 0)>0 then
-            self.catalog_message="当前章节正在阅读，请退出阅读器后再重写下载。"
+            report("重写下载失败："..(err or "未知错误"))
         else
-            local queued,queue_error=Downloads.enqueue(index,self.detail.id,"single",row.id)
-            if not queued then self.catalog_message=queue_error or "无法重新安排下载。"
-            else
-                Queue.start(Queue.attach(index,self.settings.connection,self.settings.download,self))
-                self.catalog_message="已清理旧文件并重新安排下载。"
-            end
+            report(string.format("已清理旧文件并安排 %d 章重新下载。",result.queued or 0))
         end
-        self:refresh()
     end
     local function repair_download()
-        local ok,err=Downloads.enqueueRepair(index,self.detail.id,row.id)
-        if not ok then self.catalog_message=err or "无法安排换源下载。"
+        local result,err=Queue.repair(q,{item})
+        if not result then report(err or "无法安排换源下载。")
         else
-            Queue.start(Queue.attach(index,self.settings.connection,self.settings.download,self))
-            self.catalog_message="已安排换源下载，将按候选源顺序尝试。"
+            report("已安排换源下载，将按候选源顺序尝试。")
         end
-        self:refresh()
     end
     local function mark(range,read)
         local result,err=Records.mark(self:local_index(),self.detail.id,row,range,read)
@@ -281,21 +284,30 @@ function Manga:chapter_actions(row)
         end}
     end
     local buttons={}
-    if row.path then
-        buttons[#buttons+1]={text="重写下载",callback=function()
+    local function add(text,callback)
+        buttons[#buttons+1]={{text=text,callback=function()
             UI:close(dialog)
-            confirm("删除旧文件并重新下载这一章？",rewrite_download)
-        end}
+            callback()
+        end}}
     end
-    if row.path or row.state=="failed" or row.state=="queued" or row.state=="paused" then
-        buttons[#buttons+1]={text="换源下载",callback=function()
-            UI:close(dialog)
-            confirm("跳过当前源并按候选顺序换源下载？",repair_download)
-        end}
-        buttons[#buttons+1]={text="删除下载",callback=function()
-            UI:close(dialog)
+    if row.path then add("阅读本地文件",function() self:open_local(row.path) end) end
+    if row.state=="active" or row.state=="queued" then
+        add("暂停下载",pause_download)
+    elseif row.state=="failed" or row.state=="paused" then
+        add("重试原源",retry_download)
+    end
+    add("换源下载",function()
+        confirm("跳过当前源并按候选顺序换源下载？",repair_download)
+    end)
+    if row.path or row.state then
+        add("重写下载",function()
+            confirm("删除旧文件并从原源重新下载这一章？",rewrite_download)
+        end)
+    end
+    if row.path or row.state then
+        add("删除下载",function()
             confirm("删除这一章的下载文件和下载任务？",delete_download)
-        end}
+        end)
     end
     buttons[#buttons+1]={action(row.read and "标为未读" or "标为已读","single",not row.read)}
     buttons[#buttons+1]={action("标记之前为已读","before",true)}

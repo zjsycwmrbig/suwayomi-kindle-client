@@ -176,6 +176,50 @@ function Queue.delete(q,items,open_path)
     return result
 end
 
+-- Changing source uses the same persisted repair path as automatic fallback.
+-- Existing workers must be stopped before a new repair ticket can claim them.
+function Queue.repair(q,items)
+    local selected={}
+    for _,item in ipairs(items or {}) do
+        selected[item.manga.."/"..item.id]=true
+    end
+    if not next(selected) then return nil,"请先选择章节。" end
+    local result,err=Downloads.enqueueRepairs(q.index,items)
+    if not result then return nil,err end
+    if result.count==0 then return nil,"所选章节已不在当前漫画目录中。" end
+    for ticket,job in pairs(q.jobs) do
+        if selected[job.manga.."/"..job.id] then
+            q.jobs[ticket]=nil
+            q.active=q.active-1
+            if job.handle then job.handle:cancel() end
+            Log.add(q.index,job,"已手动切换到换源下载")
+        end
+    end
+    Queue.start(q,true)
+    redraw(q)
+    return result
+end
+
+-- Rewrite keeps the original source. It removes the old task and exact local
+-- archive first, then creates a fresh single-chapter job.
+function Queue.rewrite(q,items,open_path)
+    local result,err=Queue.delete(q,items,open_path)
+    if not result then return nil,err end
+    if (result.kept or 0)>0 then
+        return nil,"当前章节正在阅读，请退出阅读器后再重写下载。"
+    end
+    local queued=0
+    for _,item in ipairs(items or {}) do
+        local added,why=Downloads.enqueue(q.index,tostring(item.manga),"single",item.id)
+        if not added then return nil,why or "无法重新安排下载。" end
+        queued=queued+(added.count or 0)
+    end
+    q.waiting=false
+    Queue.start(q,true)
+    redraw(q)
+    return {queued=queued,deleted=result}
+end
+
 -- Re-evaluate only mangas with local files or an enabled download window.
 -- Run one manga per UI tick and recheck the open reader before unlinking.
 function Queue.reconcile(index,config,settings)

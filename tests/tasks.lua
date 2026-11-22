@@ -171,6 +171,7 @@ assert(Downloads.enqueue(ix,"7","single",17))
 attempt=assert(Downloads.claim(ix,root))
 running=assert(Tasks.page(ix,"queue",1,10,{filter="active"})).rows[1]
 assert(Chapters.download(ix,mock,attempt).path==current)
+assert(Tasks.readState(ix,"7",17)==false)
 removed=assert(Tasks.deleteQueue(ix,{running},root,current))
 assert(removed.kept==1 and lfs.attributes(current))
 removed=assert(Tasks.deleteQueue(ix,{running},root))
