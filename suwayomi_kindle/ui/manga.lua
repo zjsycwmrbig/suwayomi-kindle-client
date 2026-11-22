@@ -91,7 +91,9 @@ function Manga:detail_footer(width)
         row[#row+1] = Button.new{text=label,width=w,compact=true,show_parent=self,
             enabled=self.pending ~= "membership",callback=action}
     end
-    add("全部章节", function() self:open_directory(false) end)
+    -- The full directory starts at the first unread chapter without opening
+    -- or downloading it. "继续阅读" remains the explicit open action.
+    add("全部章节", function() self:open_directory("locate") end)
     add("继续阅读", function() self:open_directory(true) end)
     add(item.in_library and "移除书架" or "加入书架",function()
         self:request_catalog("membership",{item=item,enabled=not item.in_library},function(result)

@@ -159,6 +159,7 @@ local function mark_task(home,item)
     home:refresh()
 end
 
+local task_dialog
 task_dialog=function(home,item,label,from_queue)
     local dialog
     local buttons={}
@@ -182,7 +183,7 @@ task_dialog=function(home,item,label,from_queue)
     end
     add("任务详情",function() notice(detail_text()) end)
     if item.path and require("libs/libkoreader-lfs").attributes(item.path,"mode")=="file" then
-        add("阅读本地文件",function() open_file(home,item) end)
+        add("阅读本章",function() open_file(home,item) end)
     end
     if from_queue and (item.state=="active" or item.state=="queued") then
         add("暂停任务",function()
@@ -222,6 +223,12 @@ task_dialog=function(home,item,label,from_queue)
         })
     end)
     add("切换已读状态",function() mark_task(home,item) end)
+    if not from_queue then
+        add("多选文件",function()
+            home.task_editing,home.task_selection=true,{}
+            toggle_selection(home,item)
+        end)
+    end
     add(from_queue and "删除任务及文件" or "删除文件",function()
         UI:show(require("ui/widget/confirmbox"):new{
             text="删除这一章的下载任务和本机文件？阅读记录会保留。",
@@ -321,7 +328,6 @@ local function enter_folder(home,item)
     home:refresh()
 end
 
-local task_dialog
 local function file_menu(home,item,label)
     if item.state~="folder" and item.state~="orphan" then
         task_dialog(home,item,label,false)
