@@ -115,6 +115,35 @@ function Tasks.setPaused(index,paused,task)
     end)
 end
 
+function Tasks.setPausedMany(index,paused,selections)
+    return index:with_db(function(db)
+        db:exec("BEGIN IMMEDIATE")
+        local count=0
+        if not paused and tonumber(db:rowexec("SELECT paused FROM queue_control"))==1 then
+            -- Starting selected tasks while the whole queue is paused leaves
+            -- every other queued task paused, matching the single-task action.
+            db:exec("UPDATE queue SET state='paused' WHERE state='queued'; UPDATE queue_control SET paused=0")
+        end
+        local allowed=paused and "state IN ('active','queued')" or "state='paused'"
+        local update=db:prepare("UPDATE queue SET state=?,ticket=NULL,error=NULL WHERE manga=? AND id=? AND "..allowed)
+        for _,item in pairs(selections or {}) do
+            local manga,id=tostring(item.manga),tonumber(item.id)
+            if manga:match("^%d+$") and id and id>0 and id%1==0 then
+                update:reset():bind(paused and "paused" or "queued",manga,id):step()
+                count=count+(tonumber(db:rowexec("SELECT changes()")) or 0)
+            end
+        end
+        db:exec("COMMIT")
+        return {count=count}
+    end)
+end
+
+function Tasks.all(index,view,options)
+    local result,err=Tasks.page(index,view,1,100000,options)
+    if not result then return nil,err end
+    return result.rows
+end
+
 function Tasks.retry(index,selections)
     return index:with_db(function(db)
         db:exec("BEGIN IMMEDIATE")

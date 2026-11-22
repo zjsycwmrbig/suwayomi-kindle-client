@@ -109,6 +109,16 @@ local function retry_selected(home,data)
     home:refresh()
 end
 
+local function pause_selected(home,paused)
+    local selected=selection_items(home.task_selection)
+    if #selected==0 then notice("请先选择下载任务。"); return end
+    local result,err=Queue.pauseMany(scheduler(home),paused,selected)
+    if not result then notice(err or (paused and "无法暂停所选任务。" or "无法开始所选任务。")); return end
+    clear_selection(home)
+    notice(string.format(paused and "已暂停 %d 个任务。" or "已开始 %d 个任务。",result.count))
+    if home.alive then home:refresh() end
+end
+
 local function repair_selected(home,items)
     local selected=items or selection_items(home.task_selection)
     if #selected==0 then notice("请先选择下载任务。"); return end
@@ -353,14 +363,17 @@ local function file_menu(home,item,label)
     UI:show(dialog)
 end
 
-local function select_page(home,rows)
-    local all=true
-    for _,item in ipairs(rows) do
-        if not home.task_selection[item.key] then all=false; break end
-    end
-    for _,item in ipairs(rows) do
-        if all then home.task_selection[item.key]=nil else home.task_selection[item.key]=item end
-    end
+local function select_all(home)
+    local view=home.task_view or "queue"
+    local rows,err=Tasks.all(home:local_index(),view,{
+        filter=home.task_filter,
+        file_scope=home.task_file_scope or "managed",
+        manga=home.task_folder and home.task_folder.manga,
+    })
+    if not rows then notice(err or "无法读取当前标签内容。"); return end
+    home.task_selection={}
+    for _,item in ipairs(rows) do home.task_selection[item.key]=item end
+    if #rows==0 then notice("当前标签下没有可选择的项目。") end
     home:refresh()
 end
 
@@ -372,17 +385,28 @@ function Page:task_actions()
         if not ok then notice(err) end
     end
     if self.task_editing then
-        local actions={{icon="close","退出选择",function() clear_selection(self); self:refresh() end}}
+        local count=selection_count(self)
+        local suffix=count>0 and (" · "..count) or ""
+        local actions={
+            {icon="check","全选当前标签",function() select_all(self) end},
+            {icon="close","退出选择",function() clear_selection(self); self:refresh() end},
+        }
         if view=="queue" then
+            actions[#actions+1]={icon="play","开始所选"..suffix,function() pause_selected(self,false) end}
+            actions[#actions+1]={icon="pause","暂停所选"..suffix,function() pause_selected(self,true) end}
             actions[#actions+1]={icon="refresh","重试所选",function()
                 local data=Tasks.page(self:local_index(),"queue",1,1,{filter=self.task_filter})
                 retry_selected(self,data or {})
             end}
         end
-        actions[#actions+1]={icon="refresh","换源重下所选",function() repair_selected(self) end}
-        actions[#actions+1]={icon="download","重写所选",function() rewrite_selected(self) end}
-        actions[#actions+1]={icon="trash","删除所选",function()
+        actions[#actions+1]={icon="refresh","换源下载"..suffix,function() repair_selected(self) end}
+        actions[#actions+1]={icon="download","重写下载"..suffix,function() rewrite_selected(self) end}
+        actions[#actions+1]={icon="trash","删除所选"..suffix,function()
             if view=="queue" then delete_tasks(self) else delete_selected(self) end
+        end}
+        actions[#actions+1]={icon="close","清空所选",function()
+            self.task_selection={}
+            self:refresh()
         end}
         return actions
     end
@@ -508,7 +532,7 @@ function Page:build_tasks(screen_width,height)
         column[#column+1]=Space:new{width=scale(8)}
     end
 
-    local reserved=scale(view=="queue" and 98 or 60)+(self.task_editing and scale(46) or 0)
+    local reserved=scale(view=="queue" and 98 or 60)
     local limit=math.max(1,math.floor((height-reserved)/scale(66)))
     local data,err
     if self.settings.connection.server_url=="" then
@@ -517,29 +541,6 @@ function Page:build_tasks(screen_width,height)
         data,err=Tasks.page(self:local_index(),view,self.task_page or 1,limit,
             {filter=self.task_filter,file_scope=file_scope,manga=self.task_folder and self.task_folder.manga})
     end
-    if self.task_editing then
-        local selected=selection_count(self)
-        local selected_w=scale(96)
-        local button_w=math.floor((width-selected_w-scale(12))/2)
-        local rows=data and data.rows or {}
-        local all=#rows>0
-        for _,item in ipairs(rows) do if not self.task_selection[item.key] then all=false; break end end
-        column[#column+1]=Row:new{
-            Text:new{width=selected_w,text=string.format("已选 %d",selected),
-                face=Font:getFace("smallinfofont",16)},
-            Button.new{text=all and "取消本页" or "全选本页",width=button_w,compact=true,show_parent=self,
-                enabled=#rows>0,callback=function() select_page(self,rows) end},
-            Gap:new{width=scale(6)},
-            Button.new{text="删除所选",width=button_w,compact=true,
-                filled=selected>0,enabled=selected>0,show_parent=self,callback=function()
-                    if view=="queue" then
-                        delete_tasks(self)
-                    else delete_selected(self) end
-                end},
-        }
-        column[#column+1]=Space:new{width=scale(8)}
-    end
-
     if not data then
         column[#column+1]=Text:new{width=width,text=err,face=Font:getFace("smallinfofont",16)}
     else

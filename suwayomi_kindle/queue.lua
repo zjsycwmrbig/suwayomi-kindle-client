@@ -158,6 +158,25 @@ function Queue.pause(q,paused,task)
     return true
 end
 
+function Queue.pauseMany(q,paused,items)
+    local result,err=Tasks.setPausedMany(q.index,paused,items)
+    if not result then return nil,err end
+    if paused then
+        local selected={}
+        for _,item in ipairs(items or {}) do selected[item.manga.."/"..item.id]=true end
+        for ticket,job in pairs(q.jobs) do
+            if selected[job.manga.."/"..job.id] then
+                q.jobs[ticket]=nil
+                q.active=q.active-1
+                if job.handle then job.handle:cancel() end
+            end
+        end
+    end
+    redraw(q)
+    Queue.start(q,not paused)
+    return result
+end
+
 function Queue.delete(q,items,open_path)
     local result,err=Tasks.deleteQueue(q.index,items,Tasks.directory(q.settings.directory),open_path)
     if not result then return nil,err end
